@@ -1,6 +1,8 @@
 // index.js — FULL WORKING (Railway) ✅
-// Telegram bot (webhook) + TV Screen (/screen) that works on ANY SmartTV (polling /api/orders)
-// Orders: up to 10, auto-disappear 5 min after timer ends
+// ✅ Telegram bot (webhook) + TV Screen (/screen) polling /api/orders (works on any SmartTV)
+// ✅ Bot: button "Новый заказ" (no /new), dishes by categories + category navigation
+// ✅ Screen: keep card size, show big centered countdown, color by remaining minutes:
+//    40–25 green, 25–5 orange, 5–0 red
 //
 // Railway Variables REQUIRED:
 // BOT_TOKEN=...
@@ -34,17 +36,30 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter((n) => Number.isFinite(n));
 
 // ==========================
-// MENU (36 items) — replace with yours
+// BOT UI CONSTANTS
 // ==========================
-const MENU_ITEMS = [
-  "Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Борщ", "Солянка", "Пельмени",
-  "Котлеты", "Пюре", "Рис", "Щи", "Харчо", "Минестроне",
-  "Болоньезе", "Макароны по-флотски", "Овощное рагу", "Картошка тушёная",
-  "Капуста тушёная", "Свекольник", "Мясо по-капитански", "Грибной суп",
-  "Плов", "Гречка", "Сосиски", "Колбаски", "Салат", "Огурец свежий",
-  "Тушёнка", "Гуляш", "Куриный суп", "Гороховый суп", "Жареный рис", "Лапша",
-  "Соус BBQ", "Соус чесночный", "Соус острый", "Хлеб"
+const BTN_NEW = "🧾 Новый заказ";
+const BTN_BACK_CATS = "⬅️ Категории";
+
+// ==========================
+// MENU by categories
+// ==========================
+const CATEGORIES = [
+  { key: "soups", label: "🍲 Супы" },
+  { key: "mains", label: "🍛 Основные блюда" },
+  { key: "sides", label: "🍟 Дополнительные блюда" },
+  { key: "grill", label: "🔥 Гриль" },
+  { key: "salads", label: "🥗 Салаты" }
 ];
+
+// ⚠️ Замени на свои блюда (внутри категорий)
+const MENU_BY_CAT = {
+  soups: ["Борщ", "Солянка", "Щи", "Харчо", "Минестроне", "Грибной суп", "Куриный суп", "Гороховый суп"],
+  mains: ["Пельмени", "Болоньезе", "Макароны по-флотски", "Овощное рагу", "Гуляш", "Плов", "Тушёнка"],
+  sides: ["Пюре", "Рис", "Гречка", "Лапша", "Картошка тушёная", "Капуста тушёная", "Хлеб", "Соус BBQ", "Соус чесночный", "Соус острый"],
+  grill: ["Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Колбаски", "Сосиски"],
+  salads: ["Салат", "Огурец свежий", "Свекольник"] // если свекольник не салат — перенеси в супы
+};
 
 // ==========================
 // ORDERS (memory)
@@ -64,7 +79,7 @@ function broadcast(io) {
 }
 
 // ==========================
-// SERVER + SOCKET.IO (socket.io optional now)
+// SERVER + SOCKET.IO (socket.io not required for screen now)
 // ==========================
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -72,7 +87,6 @@ app.use(express.json({ limit: "1mb" }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// root
 app.get("/", (_req, res) => res.type("text/plain").send("OK. Open /screen on TV"));
 
 // screen (NO CACHE)
@@ -90,7 +104,6 @@ app.get("/api/orders", (_req, res) => {
   res.json(orders);
 });
 
-// optional: socket io still emits updates (not required for TV)
 io.on("connection", (socket) => {
   pruneAndLimit();
   socket.emit("orders:update", orders);
@@ -114,7 +127,7 @@ bot.use((ctx, next) => {
   return next();
 });
 
-// access control
+// Access control
 function isAllowed(ctx) {
   if (!MANAGER_IDS.length) return true;
   const id = ctx.from?.id;
@@ -128,66 +141,83 @@ async function deny(ctx) {
   return false;
 }
 
-// state
+// State
 function getState(ctx) {
   if (!ctx.session.state) {
     ctx.session.state = {
-      step: "idle", // entering_order | entering_time | selecting_items
+      step: "idle", // idle | entering_order | entering_time | selecting_items
       orderNo: "",
       prepMinutes: 25,
-      cart: {},
-      page: 0
+      cart: {}, // { name: qty }
+      cat: null // current category key
     };
   }
   return ctx.session.state;
 }
 
+// helpers
+const NBSP4 = "\u00A0\u00A0\u00A0\u00A0"; // 4 non-breaking spaces
 function cartSummary(cart) {
   const entries = Object.entries(cart);
   if (!entries.length) return "— пусто —";
-  return entries.map(([name, qty]) => `• ${name} ×${qty}`).join("\n");
+  // Make qty close to name (name + 4 spaces + x1)
+  return entries
+    .map(([name, qty]) => `• ${name}${NBSP4}x${qty}`)
+    .join("\n");
 }
 
-function makeMenuKeyboard(page = 0) {
-  const pageSize = 12;
-  const totalPages = Math.ceil(MENU_ITEMS.length / pageSize);
-  const safePage = Math.max(0, Math.min(totalPages - 1, page));
-  const slice = MENU_ITEMS.slice(safePage * pageSize, safePage * pageSize + pageSize);
+function mainReplyKeyboard() {
+  return Markup.keyboard([[BTN_NEW]]).resize().oneTime(false);
+}
 
+function categoriesKeyboard() {
   const rows = [];
-  for (let i = 0; i < slice.length; i += 2) {
-    const a = slice[i];
-    const b = slice[i + 1];
+  for (let i = 0; i < CATEGORIES.length; i += 2) {
+    const a = CATEGORIES[i];
+    const b = CATEGORIES[i + 1];
+    const row = [Markup.button.callback(a.label, `cat:${a.key}`)];
+    if (b) row.push(Markup.button.callback(b.label, `cat:${b.key}`));
+    rows.push(row);
+  }
+  rows.push([
+    Markup.button.callback("🧹 Очистить", "clear"),
+    Markup.button.callback("✅ Отправить на ТВ", "send")
+  ]);
+  rows.push([
+    Markup.button.callback("✏️ Изменить №/время", "edit"),
+    Markup.button.callback("➖ Убрать позицию", "remove_mode")
+  ]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function dishesKeyboard(catKey) {
+  const dishes = MENU_BY_CAT[catKey] || [];
+  const rows = [];
+
+  // 2 columns for dishes
+  for (let i = 0; i < dishes.length; i += 2) {
+    const a = dishes[i];
+    const b = dishes[i + 1];
     const row = [Markup.button.callback(`➕ ${a}`, `add:${a}`)];
     if (b) row.push(Markup.button.callback(`➕ ${b}`, `add:${b}`));
     rows.push(row);
   }
 
   rows.push([
-    Markup.button.callback("🧹 Очистить", "clear"),
-    Markup.button.callback("✅ Отправить на ТВ", "send")
+    Markup.button.callback(BTN_BACK_CATS, "cats"),
+    Markup.button.callback("🧹 Очистить", "clear")
   ]);
-
   rows.push([
-    Markup.button.callback("✏️ Изменить №/время", "edit"),
+    Markup.button.callback("✅ Отправить на ТВ", "send"),
     Markup.button.callback("➖ Убрать позицию", "remove_mode")
   ]);
-
-  if (totalPages > 1) {
-    rows.push([
-      Markup.button.callback("⬅️", `page:${safePage - 1}`),
-      Markup.button.callback(`Стр. ${safePage + 1}/${totalPages}`, "noop"),
-      Markup.button.callback("➡️", `page:${safePage + 1}`)
-    ]);
-  }
+  rows.push([Markup.button.callback("✏️ Изменить №/время", "edit")]);
 
   return Markup.inlineKeyboard(rows);
 }
 
-async function showComposer(ctx, page = 0) {
+async function showComposer(ctx) {
   const st = getState(ctx);
-  st.page = page;
-
   const text =
 `🧾 Создание заказа
 
@@ -197,90 +227,116 @@ async function showComposer(ctx, page = 0) {
 Корзина:
 ${cartSummary(st.cart)}
 
-Нажимай блюда (➕), затем «✅ Отправить на ТВ».`;
+Выбери категорию или добавляй блюда.`;
 
+  // If callback: edit message if possible
   if (ctx.updateType === "callback_query") {
     try {
-      await ctx.editMessageText(text, makeMenuKeyboard(page));
+      await ctx.editMessageText(text, categoriesKeyboard());
     } catch {
-      await ctx.reply(text, makeMenuKeyboard(page));
+      await ctx.reply(text, categoriesKeyboard());
     }
   } else {
-    await ctx.reply(text, makeMenuKeyboard(page));
+    await ctx.reply(text, categoriesKeyboard());
   }
 }
 
-// helpful commands
-bot.command("ping", (ctx) => ctx.reply("pong ✅"));
-bot.command("id", (ctx) => ctx.reply(`Ваш user_id: ${ctx.from?.id}`));
+async function showDishes(ctx, catKey) {
+  const st = getState(ctx);
+  st.cat = catKey;
 
+  const catLabel = CATEGORIES.find((c) => c.key === catKey)?.label || catKey;
+
+  const text =
+`📂 ${catLabel}
+
+Номер: ${st.orderNo || "—"} | Время: ${st.prepMinutes} мин
+
+Корзина:
+${cartSummary(st.cart)}
+
+Нажимай блюда (➕)`;
+
+  if (ctx.updateType === "callback_query") {
+    try {
+      await ctx.editMessageText(text, dishesKeyboard(catKey));
+    } catch {
+      await ctx.reply(text, dishesKeyboard(catKey));
+    }
+  } else {
+    await ctx.reply(text, dishesKeyboard(catKey));
+  }
+}
+
+// Commands
+bot.command("id", async (ctx) => {
+  await ctx.reply(`Ваш user_id: ${ctx.from?.id}`);
+});
+
+// Start
 bot.start(async (ctx) => {
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
-  st.step = "entering_order";
-  st.orderNo = "";
-  st.prepMinutes = 25;
-  st.cart = {};
-  st.page = 0;
-
-  await ctx.reply("✅ Бот работает. Введите номер заказа (например: GF-254):");
+  st.step = "idle";
+  await ctx.reply("Готово. Нажми кнопку «Новый заказ».", mainReplyKeyboard());
 });
 
-bot.command("new", async (ctx) => {
+// Button: Новый заказ
+bot.hears(BTN_NEW, async (ctx) => {
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   st.step = "entering_order";
   st.orderNo = "";
   st.prepMinutes = 25;
   st.cart = {};
-  st.page = 0;
+  st.cat = null;
 
-  await ctx.reply("Ок. Введите номер заказа:");
+  await ctx.reply("Введите номер заказа (например: GF-254):", mainReplyKeyboard());
 });
 
+// Text flow
 bot.on("text", async (ctx) => {
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
-  const txt = ctx.message.text.trim();
+  const txt = (ctx.message.text || "").trim();
 
-  if (txt.startsWith("/")) return;
+  if (txt === BTN_NEW) return; // handled by hears
 
   if (st.step === "entering_order") {
     st.orderNo = txt;
     st.step = "entering_time";
-    await ctx.reply("Введите время приготовления (1–240 минут), например 20:");
+    await ctx.reply("Введите время приготовления (1–240 минут), например 20:", mainReplyKeyboard());
     return;
   }
 
   if (st.step === "entering_time") {
     const n = Number(txt);
     if (!Number.isFinite(n) || n < 1 || n > 240) {
-      await ctx.reply("Введите число 1–240.");
+      await ctx.reply("Введите число 1–240.", mainReplyKeyboard());
       return;
     }
     st.prepMinutes = Math.floor(n);
     st.step = "selecting_items";
-    await showComposer(ctx, 0);
+    await showComposer(ctx);
     return;
   }
 
-  await ctx.reply("Нажми /new чтобы начать новый заказ.");
+  // default
+  await ctx.reply("Нажми «Новый заказ».", mainReplyKeyboard());
 });
 
-bot.action("noop", async (ctx) => ctx.answerCbQuery());
-
-bot.action(/page:(-?\d+)/, async (ctx) => {
+// Callbacks
+bot.action("cats", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
+  await showComposer(ctx);
+});
 
-  const page = Number(ctx.match[1]);
-  const pageSize = 12;
-  const totalPages = Math.ceil(MENU_ITEMS.length / pageSize);
-  const safePage = Math.max(0, Math.min(totalPages - 1, page));
-  await showComposer(ctx, safePage);
+bot.action(/cat:(.+)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+  const catKey = ctx.match[1];
+  await showDishes(ctx, catKey);
 });
 
 bot.action(/add:(.+)/, async (ctx) => {
@@ -291,41 +347,58 @@ bot.action(/add:(.+)/, async (ctx) => {
   const name = ctx.match[1];
   st.cart[name] = (st.cart[name] || 0) + 1;
 
-  await showComposer(ctx, st.page || 0);
+  // Stay in current view
+  if (st.cat) await showDishes(ctx, st.cat);
+  else await showComposer(ctx);
 });
 
 bot.action("clear", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   st.cart = {};
-  await showComposer(ctx, st.page || 0);
+  if (st.cat) await showDishes(ctx, st.cat);
+  else await showComposer(ctx);
 });
 
 bot.action("edit", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   st.step = "entering_order";
-  await ctx.reply("Введите номер заказа заново:");
+  st.orderNo = "";
+  st.prepMinutes = 25;
+  st.cart = {};
+  st.cat = null;
+  await ctx.reply("Введите номер заказа заново:", mainReplyKeyboard());
 });
 
+// Remove mode
 bot.action("remove_mode", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
 
   const st = getState(ctx);
   const keys = Object.keys(st.cart);
-  if (!keys.length) return ctx.reply("Корзина пустая.");
+  if (!keys.length) {
+    await ctx.reply("Корзина пустая.", mainReplyKeyboard());
+    return;
+  }
 
   const rows = keys.map((k) => [
-    Markup.button.callback(`➖ ${k} (×${st.cart[k]})`, `rem:${k}`)
+    Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`)
   ]);
-  rows.push([Markup.button.callback("⬅️ Назад", "back_to_menu")]);
+  rows.push([Markup.button.callback("⬅️ Назад", st.cat ? "back_to_dishes" : "cats")]);
 
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
+});
+
+bot.action("back_to_dishes", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+  const st = getState(ctx);
+  if (st.cat) await showDishes(ctx, st.cat);
+  else await showComposer(ctx);
 });
 
 bot.action(/rem:(.+)/, async (ctx) => {
@@ -338,17 +411,10 @@ bot.action(/rem:(.+)/, async (ctx) => {
   if (v <= 0) delete st.cart[name];
   else st.cart[name] = v;
 
-  await ctx.reply(`Ок: ${name}`);
+  await ctx.reply(`Ок: ${name}`, mainReplyKeyboard());
 });
 
-bot.action("back_to_menu", async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-
-  const st = getState(ctx);
-  await showComposer(ctx, st.page || 0);
-});
-
+// Send order
 bot.action("send", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
@@ -356,8 +422,14 @@ bot.action("send", async (ctx) => {
   const st = getState(ctx);
   const items = Object.entries(st.cart).map(([name, qty]) => ({ name, qty }));
 
-  if (!st.orderNo.trim()) return ctx.reply("❌ Нет номера заказа. Нажми /start");
-  if (!items.length) return ctx.reply("❌ Корзина пустая.");
+  if (!st.orderNo.trim()) {
+    await ctx.reply("❌ Нет номера заказа. Нажми «Новый заказ».", mainReplyKeyboard());
+    return;
+  }
+  if (!items.length) {
+    await ctx.reply("❌ Корзина пустая.", mainReplyKeyboard());
+    return;
+  }
 
   const createdAt = Date.now();
   const endsAt = createdAt + st.prepMinutes * 60_000;
@@ -375,13 +447,17 @@ bot.action("send", async (ctx) => {
 
   broadcast(io);
 
-  await ctx.reply(`✅ Отправлено на ТВ: ${st.orderNo} (${st.prepMinutes} мин)\nОткрой: ${PUBLIC_URL}/screen`);
+  await ctx.reply(
+    `✅ Отправлено на ТВ: ${st.orderNo} (${st.prepMinutes} мин)\nОткрой: ${PUBLIC_URL}/screen`,
+    mainReplyKeyboard()
+  );
 
+  // reset to idle (but keep keyboard)
   st.step = "idle";
   st.orderNo = "";
   st.prepMinutes = 25;
   st.cart = {};
-  st.page = 0;
+  st.cat = null;
 });
 
 // ==========================
@@ -413,7 +489,7 @@ server.listen(PORT, async () => {
 });
 
 // ==========================
-// SCREEN HTML (polling, no socket.io) ✅
+// SCREEN HTML (polling) ✅
 // ==========================
 function getScreenHtml() {
   return `<!doctype html>
@@ -430,15 +506,44 @@ function getScreenHtml() {
     .title{font-size:28px;font-weight:900}
     .clock{opacity:.8}
     .grid{margin-top:12px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-    .card{background:var(--card);border:1px solid var(--stroke);border-radius:16px;padding:12px;min-height:120px}
+    .card{
+      background:var(--card);
+      border:1px solid var(--stroke);
+      border-radius:16px;
+      padding:12px;
+      min-height:120px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
     .row{display:flex;justify-content:space-between;align-items:baseline}
     .orderNo{font-size:22px;font-weight:900}
-    .timer{font-size:22px;font-weight:900}
-    .list{margin-top:8px;display:grid;gap:6px;font-size:18px}
-    .item{display:flex;justify-content:space-between}
+    .meta{opacity:.85;font-weight:800}
+    .list{display:grid;gap:6px;font-size:18px}
+    .item{display:flex;justify-content:space-between;align-items:baseline}
     .name{font-weight:800}
-    .qty{font-weight:900}
-    .done{margin-top:10px;font-weight:900;opacity:.9}
+    .qty{font-weight:900;opacity:.95; margin-left:10px}
+    /* BIG TIMER centered, placed after list */
+    .timerBigWrap{
+      flex:1;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding-top:6px;
+      padding-bottom:6px;
+    }
+    .timerBig{
+      font-weight:1000;
+      letter-spacing:1px;
+      font-size:44px;
+      line-height:1;
+      text-align:center;
+      width:100%;
+    }
+    .tGreen{ color: #22c55e; }   /* green */
+    .tOrange{ color: #f59e0b; }  /* orange */
+    .tRed{ color: #ef4444; }     /* red */
+    .done{margin-top:2px;font-weight:900;opacity:.9;text-align:center}
     .empty{background:rgba(17,27,49,.35);border:1px dashed rgba(255,255,255,.12)}
     .status{margin-top:8px;opacity:.7;font-size:14px}
   </style>
@@ -467,6 +572,12 @@ function getScreenHtml() {
         "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"
       }[c]));
     }
+    function timerClass(remainingMs){
+      const mins = remainingMs / 60000;
+      if (mins > 25) return "tGreen";     // 40–25
+      if (mins > 5) return "tOrange";     // 25–5
+      return "tRed";                      // 5–0
+    }
 
     async function fetchOrders(){
       const status = document.getElementById("status");
@@ -492,21 +603,32 @@ function getScreenHtml() {
       active.forEach(o=>{
         const remaining = o.endsAt - now;
         const late = remaining <= 0;
+        const big = late ? "0:00" : fmt(remaining);
+        const cls = timerClass(Math.max(0, remaining));
+
+        const itemsHtml = (o.items||[]).map(it=>{
+          // qty closer to name: "Пельмени    x1" on screen (visual)
+          return \`
+            <div class="item">
+              <div class="name">\${esc(it.name)}</div>
+              <div class="qty">x\${it.qty}</div>
+            </div>\`;
+        }).join("");
 
         const card = document.createElement("div");
         card.className = "card";
         card.innerHTML = \`
           <div class="row">
             <div class="orderNo">\${esc(o.orderNo)}</div>
-            <div class="timer">\${late ? "0:00" : fmt(remaining)}</div>
+            <div class="meta">\${esc(String(o.prepMinutes))} мин</div>
           </div>
-          <div class="list">
-            \${(o.items||[]).map(it=>\`
-              <div class="item">
-                <div class="name">\${esc(it.name)}</div>
-                <div class="qty">×\${it.qty}</div>
-              </div>\`).join("")}
+
+          <div class="list">\${itemsHtml}</div>
+
+          <div class="timerBigWrap">
+            <div class="timerBig \${cls}">\${big}</div>
           </div>
+
           \${late ? '<div class="done">Завершён (удалится через 5 минут)</div>' : ''}
         \`;
         grid.appendChild(card);
