@@ -1,12 +1,3 @@
-// index.js — WORKING (Railway) ✅
-// Express + Socket.IO + /screen + Telegram bot via WEBHOOK
-//
-// ENV (Railway Variables):
-// BOT_TOKEN=...
-// PUBLIC_URL=https://xxxxx.up.railway.app
-// WEBHOOK_SECRET=long-random-string
-// Optional: MANAGER_IDS=123,456
-
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -31,7 +22,7 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter((n) => Number.isFinite(n));
 
 // ==========================
-// MENU (36 items) — replace with yours
+// MENU (36 items) — replace later
 // ==========================
 const MENU_ITEMS = [
   "Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Борщ", "Солянка", "Пельмени",
@@ -88,25 +79,24 @@ setInterval(() => {
 }, 30_000);
 
 // ==========================
-// BOT (WEBHOOK)
+// BOT (WEBHOOK via handleUpdate)
 // ==========================
 const bot = new Telegraf(BOT_TOKEN);
 
-// log any bot errors
+// ловим ВСЕ ошибки бота
 bot.catch((err) => console.error("BOT ERROR:", err));
 
-// session
 bot.use(session());
 
-// ensure ctx.session exists
+// страховка от ctx.session undefined
 bot.use((ctx, next) => {
   if (!ctx.session) ctx.session = {};
   return next();
 });
 
-// log updates processed by telegraf (so you SEE it in logs)
+// ЛОГ: если это появится — telegraf точно обрабатывает
 bot.use((ctx, next) => {
-  console.log("BOT UPDATE:", ctx.updateType, "FROM:", ctx.from?.id, "TEXT:", ctx.message?.text);
+  console.log("BOT UPDATE ✅", ctx.updateType, "FROM:", ctx.from?.id, "TEXT:", ctx.message?.text);
   return next();
 });
 
@@ -115,7 +105,6 @@ function isAllowed(ctx) {
   const id = ctx.from?.id;
   return !!id && MANAGER_IDS.includes(id);
 }
-
 async function deny(ctx) {
   if (!isAllowed(ctx)) {
     await ctx.reply("⛔️ Нет доступа.");
@@ -127,7 +116,7 @@ async function deny(ctx) {
 function getState(ctx) {
   if (!ctx.session.state) {
     ctx.session.state = {
-      step: "idle", // entering_order | entering_time | selecting_items
+      step: "idle",
       orderNo: "",
       prepMinutes: 25,
       cart: {},
@@ -205,7 +194,10 @@ ${cartSummary(st.cart)}
   }
 }
 
-// Commands
+// Быстрый тест
+bot.command("ping", (ctx) => ctx.reply("pong ✅"));
+bot.command("id", (ctx) => ctx.reply(`Ваш user_id: ${ctx.from?.id}`));
+
 bot.start(async (ctx) => {
   if (await deny(ctx)) return;
   const st = getState(ctx);
@@ -218,29 +210,12 @@ bot.start(async (ctx) => {
   await ctx.reply("✅ Бот работает. Введите номер заказа (например: Grab 12345):");
 });
 
-bot.command("new", async (ctx) => {
-  if (await deny(ctx)) return;
-  const st = getState(ctx);
-  st.step = "entering_order";
-  st.orderNo = "";
-  st.prepMinutes = 25;
-  st.cart = {};
-  st.page = 0;
-
-  await ctx.reply("Ок. Введите номер заказа:");
-});
-
-bot.command("id", async (ctx) => {
-  await ctx.reply(`Ваш user_id: ${ctx.from?.id}`);
-});
-
-// Text input steps
 bot.on("text", async (ctx) => {
   if (await deny(ctx)) return;
   const st = getState(ctx);
   const txt = ctx.message.text.trim();
 
-  if (txt.startsWith("/")) return; // commands handled elsewhere
+  if (txt.startsWith("/")) return; // команды выше
 
   if (st.step === "entering_order") {
     st.orderNo = txt;
@@ -261,42 +236,44 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  await ctx.reply("Нажми /new чтобы начать новый заказ.");
+  await ctx.reply("Нажми /start или /ping");
 });
 
-// Callbacks
 bot.action("noop", async (ctx) => ctx.answerCbQuery());
 
 bot.action(/page:(-?\d+)/, async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const page = Number(ctx.match[1]);
   const pageSize = 12;
   const totalPages = Math.ceil(MENU_ITEMS.length / pageSize);
   const safePage = Math.max(0, Math.min(totalPages - 1, page));
-
   await showComposer(ctx, safePage);
 });
 
 bot.action(/add:(.+)/, async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   const name = ctx.match[1];
   st.cart[name] = (st.cart[name] || 0) + 1;
-
   await showComposer(ctx, st.page || 0);
 });
 
 bot.action("clear", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   st.cart = {};
   await showComposer(ctx, st.page || 0);
+});
+
+bot.action("edit", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+  const st = getState(ctx);
+  st.step = "entering_order";
+  await ctx.reply("Введите номер заказа заново:");
 });
 
 bot.action("remove_mode", async (ctx) => {
@@ -331,18 +308,8 @@ bot.action(/rem:(.+)/, async (ctx) => {
 bot.action("back_to_menu", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   await showComposer(ctx, st.page || 0);
-});
-
-bot.action("edit", async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-
-  const st = getState(ctx);
-  st.step = "entering_order";
-  await ctx.reply("Введите номер заказа заново:");
 });
 
 bot.action("send", async (ctx) => {
@@ -381,25 +348,29 @@ bot.action("send", async (ctx) => {
 });
 
 // ==========================
-// WEBHOOK ROUTE (ONE handler chain!) ✅
+// WEBHOOK ENDPOINT (manual handleUpdate) ✅
 // ==========================
 const WEBHOOK_PATH = `/tg/${WEBHOOK_SECRET}`;
 
-// single route: log + telegraf handler
-app.post(
-  WEBHOOK_PATH,
-  (req, _res, next) => {
+app.post(WEBHOOK_PATH, async (req, res) => {
+  try {
     console.log("WEBHOOK HIT ✅ keys:", Object.keys(req.body || {}));
-    next();
-  },
-  bot.webhookCallback()
-);
+
+    // ВАЖНО: тут Telegraf точно обрабатывает апдейт
+    await bot.handleUpdate(req.body, res);
+
+    // Если Telegraf сам не завершил ответ — завершаем
+    if (!res.headersSent) res.sendStatus(200);
+  } catch (e) {
+    console.error("HANDLE UPDATE ERROR:", e);
+    if (!res.headersSent) res.sendStatus(200);
+  }
+});
 
 // start server and set webhook
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
   console.log("Server listening on", PORT);
-
   const webhookUrl = `${PUBLIC_URL}${WEBHOOK_PATH}`;
   try {
     await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
@@ -408,9 +379,6 @@ server.listen(PORT, async () => {
     console.error("WEBHOOK SET ERROR:", e);
   }
 });
-
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
 // ==========================
 // SCREEN HTML
@@ -519,3 +487,4 @@ function getScreenHtml() {
 </body>
 </html>`;
 }
+
