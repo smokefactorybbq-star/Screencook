@@ -1,15 +1,10 @@
-// index.js (Railway-ready)
-// ✅ Express + Socket.IO + TV screen (/screen) + Telegram bot via WEBHOOK
-// ✅ Manager creates orders in Telegram with 36 dish buttons
-// ✅ TV shows up to 10 orders with countdown + auto-hide 5 min after timer ends
-//
-// ENV required on Railway:
-// BOT_TOKEN=xxxxxxxx
+// index.js — WORKING (Railway) ✅
+// Express + Socket.IO + /screen + Telegram bot (WEBHOOK)
+// ENV on Railway:
+// BOT_TOKEN=...
 // PUBLIC_URL=https://your-app.up.railway.app
-// WEBHOOK_SECRET=some-long-random-secret
-//
-// Optional:
-// MANAGER_IDS=12345678,98765432   (Telegram user ids allowed)
+// WEBHOOK_SECRET=long-random-string
+// Optional: MANAGER_IDS=123,456
 
 import express from "express";
 import http from "http";
@@ -17,26 +12,16 @@ import { Server } from "socket.io";
 import { Telegraf, Markup, session } from "telegraf";
 
 // ==========================
-// 0) ENV CHECK
+// ENV
 // ==========================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
-if (!BOT_TOKEN) {
-  console.error("ERROR: BOT_TOKEN is not set");
-  process.exit(1);
-}
-if (!PUBLIC_URL) {
-  console.error("ERROR: PUBLIC_URL is not set (example: https://xxx.up.railway.app)");
-  process.exit(1);
-}
-if (!WEBHOOK_SECRET) {
-  console.error("ERROR: WEBHOOK_SECRET is not set");
-  process.exit(1);
-}
+if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
+if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
+if (!WEBHOOK_SECRET) throw new Error("WEBHOOK_SECRET is not set");
 
-// Optional access control
 const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .split(",")
   .map((s) => s.trim())
@@ -45,10 +30,9 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter((n) => Number.isFinite(n));
 
 // ==========================
-// 1) MENU (36 dishes)
+// MENU (36 items) — replace with your list
 // ==========================
 const MENU_ITEMS = [
-  // Replace with your exact 36 items (names shown on buttons and TV)
   "Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Борщ", "Солянка", "Пельмени",
   "Котлеты", "Пюре", "Рис", "Щи", "Харчо", "Минестроне",
   "Болоньезе", "Макароны по-флотски", "Овощное рагу", "Картошка тушёная",
@@ -59,20 +43,9 @@ const MENU_ITEMS = [
 ];
 
 // ==========================
-// 2) ORDERS STORAGE (memory)
+// ORDERS (in memory)
 // ==========================
-/**
- * order = {
- *   id, orderNo, prepMinutes,
- *   createdAt, endsAt, expiresAt,
- *   items: [{name, qty}]
- * }
- */
 let orders = [];
-
-function uid() {
-  return crypto.randomUUID();
-}
 
 function pruneAndLimit() {
   const now = Date.now();
@@ -87,7 +60,7 @@ function broadcast(io) {
 }
 
 // ==========================
-// 3) WEB SERVER + SOCKET.IO
+// SERVER
 // ==========================
 const app = express();
 app.use(express.json());
@@ -95,56 +68,47 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-app.get("/", (_req, res) => {
-  res.type("text/plain").send("OK. Open /screen on TV");
-});
-
-app.get("/screen", (_req, res) => {
-  res.type("html").send(getScreenHtml());
-});
-
+app.get("/", (_req, res) => res.type("text/plain").send("OK. Open /screen on TV"));
+app.get("/screen", (_req, res) => res.type("html").send(getScreenHtml()));
 app.get("/api/orders", (_req, res) => {
   pruneAndLimit();
   res.json(orders);
 });
 
-// Push current orders on connect
 io.on("connection", (socket) => {
   pruneAndLimit();
   socket.emit("orders:update", orders);
 });
 
-// Periodic cleanup (in case TV is open and orders expire)
 setInterval(() => {
   const before = orders.length;
   pruneAndLimit();
-  if (orders.length !== before) {
-    io.emit("orders:update", orders);
-  }
+  if (orders.length !== before) io.emit("orders:update", orders);
 }, 30_000);
 
 // ==========================
-// 4) TELEGRAM BOT (WEBHOOK)
+// BOT (WEBHOOK)
 // ==========================
 const bot = new Telegraf(BOT_TOKEN);
 
-// session middleware
+// log bot errors
+bot.catch((err) => console.error("BOT ERROR:", err));
+
 bot.use(session());
 
-// ✅ HARD FIX: sometimes ctx.session is undefined; create it
+// Ensure ctx.session exists (fix for your previous crash)
 bot.use((ctx, next) => {
   if (!ctx.session) ctx.session = {};
   return next();
 });
 
-// Access control
 function isAllowed(ctx) {
-  if (!MANAGER_IDS.length) return true; // if empty -> allow all (not recommended)
+  if (!MANAGER_IDS.length) return true;
   const id = ctx.from?.id;
   return !!id && MANAGER_IDS.includes(id);
 }
 
-async function denyIfNotAllowed(ctx) {
+async function deny(ctx) {
   if (!isAllowed(ctx)) {
     await ctx.reply("⛔️ Нет доступа.");
     return true;
@@ -152,14 +116,13 @@ async function denyIfNotAllowed(ctx) {
   return false;
 }
 
-// Manager state in session
 function getState(ctx) {
   if (!ctx.session.state) {
     ctx.session.state = {
-      step: "idle", // idle | entering_order | entering_time | selecting_items
+      step: "idle", // entering_order | entering_time | selecting_items
       orderNo: "",
       prepMinutes: 25,
-      cart: {}, // { [name]: qty }
+      cart: {},
       page: 0
     };
   }
@@ -173,12 +136,10 @@ function cartSummary(cart) {
 }
 
 function makeMenuKeyboard(page = 0) {
-  // Show dishes in pages for удобство: 12 per page
   const pageSize = 12;
   const totalPages = Math.ceil(MENU_ITEMS.length / pageSize);
   const safePage = Math.max(0, Math.min(totalPages - 1, page));
-  const start = safePage * pageSize;
-  const slice = MENU_ITEMS.slice(start, start + pageSize);
+  const slice = MENU_ITEMS.slice(safePage * pageSize, safePage * pageSize + pageSize);
 
   const rows = [];
   for (let i = 0; i < slice.length; i += 2) {
@@ -225,12 +186,11 @@ ${cartSummary(st.cart)}
 
 Нажимай блюда (➕), затем «✅ Отправить на ТВ».`;
 
-  // Use edit if this is callback query message, else reply
-  if (ctx.updateType === "callback_query" && ctx.callbackQuery?.message) {
+  // If callback: try edit, else send new message
+  if (ctx.updateType === "callback_query") {
     try {
       await ctx.editMessageText(text, makeMenuKeyboard(page));
     } catch {
-      // if Telegram can't edit (old msg), just send new
       await ctx.reply(text, makeMenuKeyboard(page));
     }
   } else {
@@ -239,46 +199,40 @@ ${cartSummary(st.cart)}
 }
 
 bot.start(async (ctx) => {
-  if (await denyIfNotAllowed(ctx)) return;
-
+  if (await deny(ctx)) return;
   const st = getState(ctx);
   st.step = "entering_order";
   st.orderNo = "";
   st.prepMinutes = 25;
   st.cart = {};
   st.page = 0;
-
   await ctx.reply("Введите номер заказа (например: Grab 12345):");
 });
 
 bot.command("new", async (ctx) => {
-  if (await denyIfNotAllowed(ctx)) return;
-
+  if (await deny(ctx)) return;
   const st = getState(ctx);
   st.step = "entering_order";
   st.orderNo = "";
   st.prepMinutes = 25;
   st.cart = {};
   st.page = 0;
-
   await ctx.reply("Ок. Введите номер заказа:");
 });
 
-// Helper command to get your Telegram user id (for MANAGER_IDS)
 bot.command("id", async (ctx) => {
   await ctx.reply(`Ваш user_id: ${ctx.from?.id}`);
 });
 
 bot.on("text", async (ctx) => {
-  if (await denyIfNotAllowed(ctx)) return;
-
+  if (await deny(ctx)) return;
   const st = getState(ctx);
   const txt = ctx.message.text.trim();
 
   if (st.step === "entering_order") {
     st.orderNo = txt;
     st.step = "entering_time";
-    await ctx.reply("Введите время приготовления (минуты, 1–240), например 25:");
+    await ctx.reply("Введите время приготовления (1–240 минут), например 25:");
     return;
   }
 
@@ -294,21 +248,18 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  await ctx.reply("Команды: /new — новый заказ, /start — начать, /id — узнать ваш user_id.");
+  await ctx.reply("Команды: /new, /start, /id");
 });
 
 bot.action("noop", async (ctx) => {
   await ctx.answerCbQuery();
 });
 
-// Page navigation
 bot.action(/page:(-?\d+)/, async (ctx) => {
   await ctx.answerCbQuery();
-  if (await denyIfNotAllowed(ctx)) return;
+  if (await deny(ctx)) return;
 
-  const st = getState(ctx);
   const page = Number(ctx.match[1]);
-
   const pageSize = 12;
   const totalPages = Math.ceil(MENU_ITEMS.length / pageSize);
   const safePage = Math.max(0, Math.min(totalPages - 1, page));
@@ -316,43 +267,40 @@ bot.action(/page:(-?\d+)/, async (ctx) => {
   await showComposer(ctx, safePage);
 });
 
-// Add item
 bot.action(/add:(.+)/, async (ctx) => {
   await ctx.answerCbQuery();
-  if (await denyIfNotAllowed(ctx)) return;
+  if (await deny(ctx)) return;
 
   const st = getState(ctx);
   const name = ctx.match[1];
   st.cart[name] = (st.cart[name] || 0) + 1;
 
-  // refresh current page to show updated basket
   await showComposer(ctx, st.page || 0);
 });
 
-// Clear cart
 bot.action("clear", async (ctx) => {
   await ctx.answerCbQuery();
-  if (await denyIfNotAllowed(ctx)) return;
+  if (await deny(ctx)) return;
 
   const st = getState(ctx);
   st.cart = {};
   await showComposer(ctx, st.page || 0);
 });
 
-// Remove mode: show list of items in cart
 bot.action("remove_mode", async (ctx) => {
   await ctx.answerCbQuery();
-  if (await denyIfNotAllowed(ctx)) return;
+  if (await deny(ctx)) return;
 
   const st = getState(ctx);
   const keys = Object.keys(st.cart);
-
   if (!keys.length) {
     await ctx.reply("Корзина пустая.");
     return;
   }
 
-  const rows = keys.map((k) => [Markup.button.callback(`➖ ${k} (×${st.cart[k]})`, `rem:${k}`)]);
+  const rows = keys.map((k) => [
+    Markup.button.callback(`➖ ${k} (×${st.cart[k]})`, `rem:${k}`)
+  ]);
   rows.push([Markup.button.callback("⬅️ Назад", "back_to_menu")]);
 
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
@@ -360,7 +308,7 @@ bot.action("remove_mode", async (ctx) => {
 
 bot.action(/rem:(.+)/, async (ctx) => {
   await ctx.answerCbQuery();
-  if (await denyIfNotAllowed(ctx)) return;
+  if (await deny(ctx)) return;
 
   const st = getState(ctx);
   const name = ctx.match[1];
@@ -373,31 +321,29 @@ bot.action(/rem:(.+)/, async (ctx) => {
 
 bot.action("back_to_menu", async (ctx) => {
   await ctx.answerCbQuery();
-  if (await denyIfNotAllowed(ctx)) return;
+  if (await deny(ctx)) return;
 
   const st = getState(ctx);
   await showComposer(ctx, st.page || 0);
 });
 
-// Edit order no/time
 bot.action("edit", async (ctx) => {
   await ctx.answerCbQuery();
-  if (await denyIfNotAllowed(ctx)) return;
+  if (await deny(ctx)) return;
 
   const st = getState(ctx);
   st.step = "entering_order";
   await ctx.reply("Введите номер заказа заново:");
 });
 
-// Send order to TV
 bot.action("send", async (ctx) => {
   await ctx.answerCbQuery();
-  if (await denyIfNotAllowed(ctx)) return;
+  if (await deny(ctx)) return;
 
   const st = getState(ctx);
   const items = Object.entries(st.cart).map(([name, qty]) => ({ name, qty }));
 
-  if (!st.orderNo || !st.orderNo.trim()) {
+  if (!st.orderNo.trim()) {
     await ctx.reply("❌ Нет номера заказа. Нажми /new");
     return;
   }
@@ -410,25 +356,24 @@ bot.action("send", async (ctx) => {
   const endsAt = createdAt + st.prepMinutes * 60_000;
   const expiresAt = endsAt + 5 * 60_000;
 
-  const order = {
-    id: uid(),
+  orders.unshift({
+    id: crypto.randomUUID(),
     orderNo: st.orderNo.trim(),
     prepMinutes: st.prepMinutes,
     createdAt,
     endsAt,
     expiresAt,
     items
-  };
+  });
 
-  orders.unshift(order);
   broadcast(io);
 
   await ctx.reply(
     `✅ Отправлено на экран!\n\n` +
-    `Номер: ${order.orderNo}\n` +
-    `Время: ${order.prepMinutes} мин\n` +
+    `Номер: ${st.orderNo}\n` +
+    `Время: ${st.prepMinutes} мин\n` +
     `Позиции: ${items.length}\n\n` +
-    `Следующий заказ: /new`
+    `Следующий: /new`
   );
 
   // reset
@@ -440,18 +385,17 @@ bot.action("send", async (ctx) => {
 });
 
 // ==========================
-// 5) WEBHOOK ROUTE + START SERVER
+// WEBHOOK: IMPORTANT PART ✅
 // ==========================
 const WEBHOOK_PATH = `/tg/${WEBHOOK_SECRET}`;
 
-// Telegram will POST updates here
-app.use(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
+// ✅ Correct mounting: POST + webhookCallback() (no path mismatch)
+app.post(WEBHOOK_PATH, bot.webhookCallback());
 
+// Start server and set webhook
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
   console.log("Server listening on", PORT);
-
-  // Set webhook (and drop pending old updates)
   const webhookUrl = `${PUBLIC_URL}${WEBHOOK_PATH}`;
   try {
     await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
@@ -461,12 +405,11 @@ server.listen(PORT, async () => {
   }
 });
 
-// Stop properly
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
 // ==========================
-// 6) TV SCREEN HTML
+// TV SCREEN HTML
 // ==========================
 function getScreenHtml() {
   return `<!doctype html>
@@ -476,7 +419,7 @@ function getScreenHtml() {
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Kitchen Screen</title>
   <style>
-    :root { --bg:#0b1220; --card:#111b31; --stroke:rgba(255,255,255,.10); --muted:rgba(255,255,255,.75); }
+    :root { --bg:#0b1220; --card:#111b31; --stroke:rgba(255,255,255,.10); }
     html,body{margin:0;height:100%;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
     .wrap{padding:14px}
     .top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
@@ -515,7 +458,6 @@ function getScreenHtml() {
       const ss = s%60;
       return m + ":" + String(ss).padStart(2,"0");
     }
-
     function escapeHtml(s){
       return String(s).replace(/[&<>"']/g, c=>({
         "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"
@@ -580,4 +522,3 @@ function getScreenHtml() {
 </body>
 </html>`;
 }
-
