@@ -1,9 +1,8 @@
-// index.js — WORKING (Railway) ✅
-// Express + Socket.IO + /screen + Telegram bot (WEBHOOK)
-// ENV on Railway:
+// index.js — Railway WORKING + HARD DEBUG ✅
+// ENV:
 // BOT_TOKEN=...
-// PUBLIC_URL=https://your-app.up.railway.app
-// WEBHOOK_SECRET=long-random-string
+// PUBLIC_URL=https://xxxxx.up.railway.app
+// WEBHOOK_SECRET=some-long-random
 // Optional: MANAGER_IDS=123,456
 
 import express from "express";
@@ -11,9 +10,6 @@ import http from "http";
 import { Server } from "socket.io";
 import { Telegraf, Markup, session } from "telegraf";
 
-// ==========================
-// ENV
-// ==========================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
@@ -26,11 +22,11 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean)
-  .map((s) => Number(s))
+  .map(Number)
   .filter((n) => Number.isFinite(n));
 
 // ==========================
-// MENU (36 items) — replace with your list
+// MENU (36 items) — replace later
 // ==========================
 const MENU_ITEMS = [
   "Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Борщ", "Солянка", "Пельмени",
@@ -43,7 +39,7 @@ const MENU_ITEMS = [
 ];
 
 // ==========================
-// ORDERS (in memory)
+// ORDERS (memory)
 // ==========================
 let orders = [];
 
@@ -60,10 +56,12 @@ function broadcast(io) {
 }
 
 // ==========================
-// SERVER
+// SERVER + SOCKET.IO
 // ==========================
 const app = express();
-app.use(express.json());
+
+// важно: json парсер ДО webhook (Telegram шлёт JSON)
+app.use(express.json({ limit: "1mb" }));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
@@ -87,27 +85,36 @@ setInterval(() => {
 }, 30_000);
 
 // ==========================
-// BOT (WEBHOOK)
+// BOT
 // ==========================
 const bot = new Telegraf(BOT_TOKEN);
 
-// log bot errors
-bot.catch((err) => console.error("BOT ERROR:", err));
+// ЛОГ ЛЮБОЙ ОШИБКИ БОТА
+bot.catch((err) => {
+  console.error("BOT ERROR:", err);
+});
 
+// сессии
 bot.use(session());
 
-// Ensure ctx.session exists (fix for your previous crash)
+// страховка от ctx.session undefined
 bot.use((ctx, next) => {
   if (!ctx.session) ctx.session = {};
   return next();
 });
 
+// ЛОГ КАЖДОГО АПДЕЙТА (КЛЮЧЕВО!)
+bot.use(async (ctx, next) => {
+  console.log("BOT UPDATE TYPE:", ctx.updateType, "FROM:", ctx.from?.id, "TEXT:", ctx.message?.text);
+  return next();
+});
+
+// доступ
 function isAllowed(ctx) {
   if (!MANAGER_IDS.length) return true;
   const id = ctx.from?.id;
   return !!id && MANAGER_IDS.includes(id);
 }
-
 async function deny(ctx) {
   if (!isAllowed(ctx)) {
     await ctx.reply("⛔️ Нет доступа.");
@@ -116,10 +123,11 @@ async function deny(ctx) {
   return false;
 }
 
+// state
 function getState(ctx) {
   if (!ctx.session.state) {
     ctx.session.state = {
-      step: "idle", // entering_order | entering_time | selecting_items
+      step: "idle",
       orderNo: "",
       prepMinutes: 25,
       cart: {},
@@ -151,13 +159,13 @@ function makeMenuKeyboard(page = 0) {
   }
 
   rows.push([
-    Markup.button.callback("➖ Убрать позицию", "remove_mode"),
-    Markup.button.callback("🧹 Очистить", "clear")
+    Markup.button.callback("🧹 Очистить", "clear"),
+    Markup.button.callback("✅ Отправить на ТВ", "send")
   ]);
 
   rows.push([
-    Markup.button.callback("✅ Отправить на ТВ", "send"),
-    Markup.button.callback("✏️ Изменить №/время", "edit")
+    Markup.button.callback("✏️ Изменить №/время", "edit"),
+    Markup.button.callback("➖ Убрать позицию", "remove_mode")
   ]);
 
   if (totalPages > 1) {
@@ -186,7 +194,6 @@ ${cartSummary(st.cart)}
 
 Нажимай блюда (➕), затем «✅ Отправить на ТВ».`;
 
-  // If callback: try edit, else send new message
   if (ctx.updateType === "callback_query") {
     try {
       await ctx.editMessageText(text, makeMenuKeyboard(page));
@@ -198,6 +205,18 @@ ${cartSummary(st.cart)}
   }
 }
 
+// ====== СУПЕР-ТЕСТ: бот отвечает на любое сообщение ======
+bot.hears(/.*/i, async (ctx, next) => {
+  // если это /start или /new — пусть обработают хендлеры ниже
+  if (ctx.message?.text?.startsWith("/")) return next();
+  try {
+    await ctx.reply("✅ Бот живой. Напиши /start");
+  } catch (e) {
+    console.error("SEND ERROR (reply):", e);
+  }
+});
+
+// команды
 bot.start(async (ctx) => {
   if (await deny(ctx)) return;
   const st = getState(ctx);
@@ -206,7 +225,12 @@ bot.start(async (ctx) => {
   st.prepMinutes = 25;
   st.cart = {};
   st.page = 0;
-  await ctx.reply("Введите номер заказа (например: Grab 12345):");
+
+  try {
+    await ctx.reply("✅ /start получен. Введите номер заказа (например: Grab 12345):");
+  } catch (e) {
+    console.error("SEND ERROR (/start reply):", e);
+  }
 });
 
 bot.command("new", async (ctx) => {
@@ -217,6 +241,7 @@ bot.command("new", async (ctx) => {
   st.prepMinutes = 25;
   st.cart = {};
   st.page = 0;
+
   await ctx.reply("Ок. Введите номер заказа:");
 });
 
@@ -247,13 +272,9 @@ bot.on("text", async (ctx) => {
     await showComposer(ctx, 0);
     return;
   }
-
-  await ctx.reply("Команды: /new, /start, /id");
 });
 
-bot.action("noop", async (ctx) => {
-  await ctx.answerCbQuery();
-});
+bot.action("noop", async (ctx) => ctx.answerCbQuery());
 
 bot.action(/page:(-?\d+)/, async (ctx) => {
   await ctx.answerCbQuery();
@@ -263,7 +284,6 @@ bot.action(/page:(-?\d+)/, async (ctx) => {
   const pageSize = 12;
   const totalPages = Math.ceil(MENU_ITEMS.length / pageSize);
   const safePage = Math.max(0, Math.min(totalPages - 1, page));
-
   await showComposer(ctx, safePage);
 });
 
@@ -281,7 +301,6 @@ bot.action(/add:(.+)/, async (ctx) => {
 bot.action("clear", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   st.cart = {};
   await showComposer(ctx, st.page || 0);
@@ -293,16 +312,12 @@ bot.action("remove_mode", async (ctx) => {
 
   const st = getState(ctx);
   const keys = Object.keys(st.cart);
-  if (!keys.length) {
-    await ctx.reply("Корзина пустая.");
-    return;
-  }
+  if (!keys.length) return ctx.reply("Корзина пустая.");
 
   const rows = keys.map((k) => [
     Markup.button.callback(`➖ ${k} (×${st.cart[k]})`, `rem:${k}`)
   ]);
   rows.push([Markup.button.callback("⬅️ Назад", "back_to_menu")]);
-
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
 });
 
@@ -322,7 +337,6 @@ bot.action(/rem:(.+)/, async (ctx) => {
 bot.action("back_to_menu", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   await showComposer(ctx, st.page || 0);
 });
@@ -330,7 +344,6 @@ bot.action("back_to_menu", async (ctx) => {
 bot.action("edit", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   st.step = "entering_order";
   await ctx.reply("Введите номер заказа заново:");
@@ -343,14 +356,8 @@ bot.action("send", async (ctx) => {
   const st = getState(ctx);
   const items = Object.entries(st.cart).map(([name, qty]) => ({ name, qty }));
 
-  if (!st.orderNo.trim()) {
-    await ctx.reply("❌ Нет номера заказа. Нажми /new");
-    return;
-  }
-  if (!items.length) {
-    await ctx.reply("❌ Корзина пустая. Добавь блюда.");
-    return;
-  }
+  if (!st.orderNo.trim()) return ctx.reply("❌ Нет номера заказа. /start");
+  if (!items.length) return ctx.reply("❌ Корзина пустая.");
 
   const createdAt = Date.now();
   const endsAt = createdAt + st.prepMinutes * 60_000;
@@ -368,15 +375,8 @@ bot.action("send", async (ctx) => {
 
   broadcast(io);
 
-  await ctx.reply(
-    `✅ Отправлено на экран!\n\n` +
-    `Номер: ${st.orderNo}\n` +
-    `Время: ${st.prepMinutes} мин\n` +
-    `Позиции: ${items.length}\n\n` +
-    `Следующий: /new`
-  );
+  await ctx.reply(`✅ Отправлено на ТВ: ${st.orderNo} (${st.prepMinutes} мин)`);
 
-  // reset
   st.step = "idle";
   st.orderNo = "";
   st.prepMinutes = 25;
@@ -385,17 +385,24 @@ bot.action("send", async (ctx) => {
 });
 
 // ==========================
-// WEBHOOK: IMPORTANT PART ✅
+// WEBHOOK ROUTE (LOG INCOMING REQUEST)
 // ==========================
 const WEBHOOK_PATH = `/tg/${WEBHOOK_SECRET}`;
 
-// ✅ Correct mounting: POST + webhookCallback() (no path mismatch)
+// ЛОГ: увидишь в Railway Logs каждый POST от Telegram
+app.post(WEBHOOK_PATH, (req, res, next) => {
+  console.log("WEBHOOK HIT ✅ body keys:", Object.keys(req.body || {}));
+  next();
+});
+
+// ВАЖНО: только POST и webhookCallback() без path
 app.post(WEBHOOK_PATH, bot.webhookCallback());
 
-// Start server and set webhook
+// start server + set webhook
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
   console.log("Server listening on", PORT);
+
   const webhookUrl = `${PUBLIC_URL}${WEBHOOK_PATH}`;
   try {
     await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
@@ -409,7 +416,7 @@ process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
 // ==========================
-// TV SCREEN HTML
+// SCREEN HTML
 // ==========================
 function getScreenHtml() {
   return `<!doctype html>
@@ -420,9 +427,9 @@ function getScreenHtml() {
   <title>Kitchen Screen</title>
   <style>
     :root { --bg:#0b1220; --card:#111b31; --stroke:rgba(255,255,255,.10); }
-    html,body{margin:0;height:100%;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    html,body{margin:0;height:100%;background:var(--bg);color:#fff;font-family:system-ui}
     .wrap{padding:14px}
-    .top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+    .top{display:flex;justify-content:space-between;align-items:baseline}
     .title{font-size:28px;font-weight:900}
     .clock{opacity:.8}
     .grid{margin-top:12px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
@@ -433,7 +440,7 @@ function getScreenHtml() {
     .list{margin-top:8px;display:grid;gap:6px;font-size:18px}
     .item{display:flex;justify-content:space-between}
     .name{font-weight:800}
-    .qty{font-weight:900;opacity:.95}
+    .qty{font-weight:900}
     .done{margin-top:10px;font-weight:900;opacity:.9}
     .empty{background:rgba(17,27,49,.35);border:1px dashed rgba(255,255,255,.12)}
   </style>
@@ -458,15 +465,13 @@ function getScreenHtml() {
       const ss = s%60;
       return m + ":" + String(ss).padStart(2,"0");
     }
-    function escapeHtml(s){
-      return String(s).replace(/[&<>"']/g, c=>({
-        "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"
-      }[c]));
+    function esc(s){
+      return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
     }
 
     function render(){
       const now = Date.now();
-      const active = (orders || [])
+      const active = (orders||[])
         .filter(o => o.expiresAt > now)
         .sort((a,b)=> b.createdAt - a.createdAt)
         .slice(0,10);
@@ -480,29 +485,27 @@ function getScreenHtml() {
 
         const card = document.createElement("div");
         card.className = "card";
-
-        const itemsHtml = (o.items||[]).map(it=>\`
-          <div class="item">
-            <div class="name">\${escapeHtml(it.name)}</div>
-            <div class="qty">×\${it.qty}</div>
-          </div>
-        \`).join("");
-
         card.innerHTML = \`
           <div class="row">
-            <div class="orderNo">\${escapeHtml(o.orderNo)}</div>
+            <div class="orderNo">\${esc(o.orderNo)}</div>
             <div class="timer">\${late ? "0:00" : fmt(remaining)}</div>
           </div>
-          <div class="list">\${itemsHtml}</div>
+          <div class="list">
+            \${(o.items||[]).map(it=>\`
+              <div class="item">
+                <div class="name">\${esc(it.name)}</div>
+                <div class="qty">×\${it.qty}</div>
+              </div>\`).join("")}
+          </div>
           \${late ? '<div class="done">Завершён (удалится через 5 минут)</div>' : ''}
         \`;
         grid.appendChild(card);
       });
 
       for(let i=active.length;i<10;i++){
-        const empty = document.createElement("div");
-        empty.className = "card empty";
-        grid.appendChild(empty);
+        const e = document.createElement("div");
+        e.className = "card empty";
+        grid.appendChild(e);
       }
     }
 
@@ -511,10 +514,7 @@ function getScreenHtml() {
       render();
     }
 
-    socket.on("orders:update", (list)=>{
-      orders = list || [];
-      render();
-    });
+    socket.on("orders:update", list => { orders = list || []; render(); });
 
     setInterval(tick, 1000);
     tick();
