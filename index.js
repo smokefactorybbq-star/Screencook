@@ -1,3 +1,15 @@
+// index.js — FULL WORKING (Railway) ✅
+// Telegram bot (webhook) + TV Screen (/screen) that works on ANY SmartTV (polling /api/orders)
+// Orders: up to 10, auto-disappear 5 min after timer ends
+//
+// Railway Variables REQUIRED:
+// BOT_TOKEN=...
+// PUBLIC_URL=https://your-app.up.railway.app
+// WEBHOOK_SECRET=long-random-string
+//
+// Optional:
+// MANAGER_IDS=12345678,98765432
+
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -22,7 +34,7 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter((n) => Number.isFinite(n));
 
 // ==========================
-// MENU (36 items) — replace later
+// MENU (36 items) — replace with yours
 // ==========================
 const MENU_ITEMS = [
   "Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Борщ", "Солянка", "Пельмени",
@@ -52,7 +64,7 @@ function broadcast(io) {
 }
 
 // ==========================
-// SERVER + SOCKET.IO
+// SERVER + SOCKET.IO (socket.io optional now)
 // ==========================
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -60,13 +72,25 @@ app.use(express.json({ limit: "1mb" }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
+// root
 app.get("/", (_req, res) => res.type("text/plain").send("OK. Open /screen on TV"));
-app.get("/screen", (_req, res) => res.type("html").send(getScreenHtml()));
+
+// screen (NO CACHE)
+app.get("/screen", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.type("html").send(getScreenHtml());
+});
+
+// api orders (NO CACHE)
 app.get("/api/orders", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   pruneAndLimit();
   res.json(orders);
 });
 
+// optional: socket io still emits updates (not required for TV)
 io.on("connection", (socket) => {
   pruneAndLimit();
   socket.emit("orders:update", orders);
@@ -79,27 +103,18 @@ setInterval(() => {
 }, 30_000);
 
 // ==========================
-// BOT (WEBHOOK via handleUpdate)
+// BOT (webhook via handleUpdate) ✅
 // ==========================
 const bot = new Telegraf(BOT_TOKEN);
-
-// ловим ВСЕ ошибки бота
 bot.catch((err) => console.error("BOT ERROR:", err));
 
 bot.use(session());
-
-// страховка от ctx.session undefined
 bot.use((ctx, next) => {
   if (!ctx.session) ctx.session = {};
   return next();
 });
 
-// ЛОГ: если это появится — telegraf точно обрабатывает
-bot.use((ctx, next) => {
-  console.log("BOT UPDATE ✅", ctx.updateType, "FROM:", ctx.from?.id, "TEXT:", ctx.message?.text);
-  return next();
-});
-
+// access control
 function isAllowed(ctx) {
   if (!MANAGER_IDS.length) return true;
   const id = ctx.from?.id;
@@ -113,10 +128,11 @@ async function deny(ctx) {
   return false;
 }
 
+// state
 function getState(ctx) {
   if (!ctx.session.state) {
     ctx.session.state = {
-      step: "idle",
+      step: "idle", // entering_order | entering_time | selecting_items
       orderNo: "",
       prepMinutes: 25,
       cart: {},
@@ -194,12 +210,13 @@ ${cartSummary(st.cart)}
   }
 }
 
-// Быстрый тест
+// helpful commands
 bot.command("ping", (ctx) => ctx.reply("pong ✅"));
 bot.command("id", (ctx) => ctx.reply(`Ваш user_id: ${ctx.from?.id}`));
 
 bot.start(async (ctx) => {
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
   st.step = "entering_order";
   st.orderNo = "";
@@ -207,20 +224,34 @@ bot.start(async (ctx) => {
   st.cart = {};
   st.page = 0;
 
-  await ctx.reply("✅ Бот работает. Введите номер заказа (например: Grab 12345):");
+  await ctx.reply("✅ Бот работает. Введите номер заказа (например: GF-254):");
+});
+
+bot.command("new", async (ctx) => {
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  st.step = "entering_order";
+  st.orderNo = "";
+  st.prepMinutes = 25;
+  st.cart = {};
+  st.page = 0;
+
+  await ctx.reply("Ок. Введите номер заказа:");
 });
 
 bot.on("text", async (ctx) => {
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
   const txt = ctx.message.text.trim();
 
-  if (txt.startsWith("/")) return; // команды выше
+  if (txt.startsWith("/")) return;
 
   if (st.step === "entering_order") {
     st.orderNo = txt;
     st.step = "entering_time";
-    await ctx.reply("Введите время приготовления (1–240 минут), например 25:");
+    await ctx.reply("Введите время приготовления (1–240 минут), например 20:");
     return;
   }
 
@@ -236,7 +267,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  await ctx.reply("Нажми /start или /ping");
+  await ctx.reply("Нажми /new чтобы начать новый заказ.");
 });
 
 bot.action("noop", async (ctx) => ctx.answerCbQuery());
@@ -244,6 +275,7 @@ bot.action("noop", async (ctx) => ctx.answerCbQuery());
 bot.action(/page:(-?\d+)/, async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
+
   const page = Number(ctx.match[1]);
   const pageSize = 12;
   const totalPages = Math.ceil(MENU_ITEMS.length / pageSize);
@@ -254,15 +286,18 @@ bot.action(/page:(-?\d+)/, async (ctx) => {
 bot.action(/add:(.+)/, async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
   const name = ctx.match[1];
   st.cart[name] = (st.cart[name] || 0) + 1;
+
   await showComposer(ctx, st.page || 0);
 });
 
 bot.action("clear", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
   st.cart = {};
   await showComposer(ctx, st.page || 0);
@@ -271,6 +306,7 @@ bot.action("clear", async (ctx) => {
 bot.action("edit", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
   st.step = "entering_order";
   await ctx.reply("Введите номер заказа заново:");
@@ -308,6 +344,7 @@ bot.action(/rem:(.+)/, async (ctx) => {
 bot.action("back_to_menu", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
   await showComposer(ctx, st.page || 0);
 });
@@ -338,7 +375,7 @@ bot.action("send", async (ctx) => {
 
   broadcast(io);
 
-  await ctx.reply(`✅ Отправлено на ТВ: ${st.orderNo} (${st.prepMinutes} мин)`);
+  await ctx.reply(`✅ Отправлено на ТВ: ${st.orderNo} (${st.prepMinutes} мин)\nОткрой: ${PUBLIC_URL}/screen`);
 
   st.step = "idle";
   st.orderNo = "";
@@ -354,12 +391,7 @@ const WEBHOOK_PATH = `/tg/${WEBHOOK_SECRET}`;
 
 app.post(WEBHOOK_PATH, async (req, res) => {
   try {
-    console.log("WEBHOOK HIT ✅ keys:", Object.keys(req.body || {}));
-
-    // ВАЖНО: тут Telegraf точно обрабатывает апдейт
     await bot.handleUpdate(req.body, res);
-
-    // Если Telegraf сам не завершил ответ — завершаем
     if (!res.headersSent) res.sendStatus(200);
   } catch (e) {
     console.error("HANDLE UPDATE ERROR:", e);
@@ -367,7 +399,7 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   }
 });
 
-// start server and set webhook
+// start server + set webhook
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
   console.log("Server listening on", PORT);
@@ -381,7 +413,7 @@ server.listen(PORT, async () => {
 });
 
 // ==========================
-// SCREEN HTML
+// SCREEN HTML (polling, no socket.io) ✅
 // ==========================
 function getScreenHtml() {
   return `<!doctype html>
@@ -408,6 +440,7 @@ function getScreenHtml() {
     .qty{font-weight:900}
     .done{margin-top:10px;font-weight:900;opacity:.9}
     .empty{background:rgba(17,27,49,.35);border:1px dashed rgba(255,255,255,.12)}
+    .status{margin-top:8px;opacity:.7;font-size:14px}
   </style>
 </head>
 <body>
@@ -416,12 +449,11 @@ function getScreenHtml() {
       <div class="title">KITCHEN SCREEN</div>
       <div class="clock" id="clock"></div>
     </div>
+    <div class="status" id="status">loading…</div>
     <div class="grid" id="grid"></div>
   </div>
 
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script>
-    const socket = io();
     let orders = [];
 
     function fmt(ms){
@@ -431,7 +463,20 @@ function getScreenHtml() {
       return m + ":" + String(ss).padStart(2,"0");
     }
     function esc(s){
-      return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c]));
+      return String(s).replace(/[&<>"']/g, c=>({
+        "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"
+      }[c]));
+    }
+
+    async function fetchOrders(){
+      const status = document.getElementById("status");
+      try{
+        const r = await fetch("/api/orders", { cache: "no-store" });
+        orders = await r.json();
+        status.textContent = "orders: " + (orders?.length || 0) + " | updated: " + new Date().toLocaleTimeString();
+      }catch(e){
+        status.textContent = "fetch error: " + (e?.message || e);
+      }
     }
 
     function render(){
@@ -479,12 +524,12 @@ function getScreenHtml() {
       render();
     }
 
-    socket.on("orders:update", list => { orders = list || []; render(); });
-
+    setInterval(fetchOrders, 2000);
     setInterval(tick, 1000);
+
+    fetchOrders();
     tick();
   </script>
 </body>
 </html>`;
 }
-
