@@ -131,7 +131,8 @@ function screenHtml() {
       --red:#ff3b30;
       --ready:#aab2c2;
 
-      --gap:0px; /* НИКАКИХ полей — на весь экран */
+      /* SAFE AREA для ТВ (оверскан часто срезает края) */
+      --safe: 26px;
     }
     *{ box-sizing:border-box; }
     html, body { height:100%; width:100%; }
@@ -143,38 +144,50 @@ function screenHtml() {
       overflow:hidden;
     }
 
-    /* Сетка на 100% экрана */
+    /* Контейнер с safe-area отступами */
+    .stage{
+      position:fixed;
+      left: max(var(--safe), env(safe-area-inset-left));
+      right: max(var(--safe), env(safe-area-inset-right));
+      top: max(var(--safe), env(safe-area-inset-top));
+      bottom: max(var(--safe), env(safe-area-inset-bottom));
+      overflow:hidden;
+    }
+
+    /* Сетка на весь stage */
     .grid{
-      height:100vh;
-      width:100vw;
+      height:100%;
+      width:100%;
       display:grid;
       grid-template-columns: repeat(5, 1fr);
       grid-template-rows: repeat(2, 1fr);
-      gap:var(--gap);
+      gap: 10px; /* небольшой зазор для читаемости */
     }
 
     .cell{
       background:var(--cell);
       border:1px solid var(--border);
-      border-radius:0px; /* чтобы впритык и строго сеткой */
+      border-radius:18px;
       overflow:hidden;
       display:flex;
       flex-direction:column;
       min-width:0;
       min-height:0;
+      box-shadow:0 12px 30px rgba(0,0,0,.35);
     }
 
-    /* Верхняя полоса 10%: номер слева, таймер справа */
+    /* Верхняя полоса (≈10-12%): опускаем текст */
     .top{
-      height:10%;
+      height:12%;
       min-height:0;
-      border-bottom:1px solid rgba(255,255,255,.08);
-      padding:6px 10px;
+      border-bottom:1px solid rgba(255,255,255,.10);
+      padding: 10px 14px 6px; /* опустили вниз */
       display:flex;
-      align-items:center;
+      align-items:flex-end;
       justify-content:space-between;
       gap:10px;
     }
+
     .orderNo, .remain{
       font-weight:1000;
       letter-spacing:.3px;
@@ -187,45 +200,47 @@ function screenHtml() {
     .orderNo{ flex: 1 1 auto; text-align:left; }
     .remain{ flex: 0 0 auto; text-align:right; }
 
-    /* 90% — блюда */
+    /* 88% — блюда */
     .itemsWrap{
       flex:1 1 auto;
-      padding:8px 10px 10px;
+      padding: 10px 12px 12px;
       overflow:hidden;
       display:flex;
       flex-direction:column;
-      gap:6px;
+      gap: .45em;          /* ВАЖНО: в em -> уменьшается вместе со шрифтом */
       min-height:0;
+      /* font-size будет подгоняться JS */
     }
 
     .item{
       display:flex;
       justify-content:space-between;
-      gap:8px;
-      padding:6px 8px;
-      border:1px solid rgba(255,255,255,.08);
-      border-radius:10px;
+      gap: .6em;           /* em */
+      padding: .55em .7em; /* em -> уменьшается при уменьшении шрифта */
+      border:1px solid rgba(255,255,255,.09);
+      border-radius: .9em; /* em */
       background:rgba(255,255,255,.03);
       min-width:0;
     }
+
     .name{
       min-width:0;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      /* ВАЖНО: перенос на 2 строки */
+      font-weight:950;
+      /* перенос на 2 строки */
       white-space:normal;
       display:-webkit-box;
       -webkit-line-clamp:2;
       -webkit-box-orient:vertical;
-      line-height:1.1;
-      font-weight:950;
+      line-height:1.12;
+      overflow:hidden;
     }
+
     .qty{
       flex:0 0 auto;
       white-space:nowrap;
       color:rgba(255,255,255,.75);
       font-weight:1000;
-      margin-left:6px;
+      margin-left:.25em;
     }
 
     .placeholder{
@@ -247,16 +262,17 @@ function screenHtml() {
       color:rgba(255,255,255,.18);
       font-weight:1000;
       font-size:28px;
-      letter-spacing:.3px;
     }
   </style>
 </head>
 <body>
-  <div class="grid" id="grid"></div>
+  <div class="stage">
+    <div class="grid" id="grid"></div>
+  </div>
 
 <script>
   const grid = document.getElementById('grid');
-  const COLS = 5, ROWS = 2, TOTAL = 10;
+  const TOTAL = 10;
 
   function fmt2(n){ return String(n).padStart(2,'0'); }
   function mmss(ms){
@@ -275,24 +291,25 @@ function screenHtml() {
     return 'var(--green)';
   }
 
-  // Подогнать текст по ширине И высоте контейнера (работает стабильнее)
+  // Подгон текста (ширина+высота)
   function fitText(el, maxPx, minPx){
     if (!el) return;
     let size = maxPx;
     el.style.fontSize = size + 'px';
-    // маленький запас
     while (size > minPx && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight)){
       size -= 1;
       el.style.fontSize = size + 'px';
     }
   }
 
-  // Уменьшить шрифт для списка блюд, пока ВСЁ не влезет
+  // Подгон шрифта для блюд: уменьшаем, пока scrollHeight не влезет
   function fitItems(container, maxPx, minPx){
     if (!container) return;
     let size = maxPx;
     container.style.fontSize = size + 'px';
-    container.style.lineHeight = "1.08";
+    container.style.lineHeight = "1.10";
+
+    // важный цикл: уменьшаем, пока весь список не влезет
     while (size > minPx && container.scrollHeight > container.clientHeight){
       size -= 1;
       container.style.fontSize = size + 'px';
@@ -344,17 +361,11 @@ function screenHtml() {
       grid.appendChild(cell);
     }
 
-    // Подгоняем шрифты
-    grid.querySelectorAll('[data-fit="order"]').forEach(el => {
-      // высота top маленькая, поэтому max делаем умеренным
-      fitText(el, 32, 10);
-    });
-    grid.querySelectorAll('[data-fit="remain"]').forEach(el => {
-      fitText(el, 28, 10);
-    });
-    grid.querySelectorAll('[data-fit="items"]').forEach(box => {
-      // Это ключевое: чтобы "большие заказы" НЕ исчезали — уменьшаем шрифт пока не влезет
-      fitItems(box, 18, 8);
+    // ⚠️ Фитим после того как браузер реально рассчитал размеры
+    requestAnimationFrame(() => {
+      grid.querySelectorAll('[data-fit="order"]').forEach(el => fitText(el, 34, 10));
+      grid.querySelectorAll('[data-fit="remain"]').forEach(el => fitText(el, 30, 10));
+      grid.querySelectorAll('[data-fit="items"]').forEach(box => fitItems(box, 22, 8));
     });
   }
 
@@ -411,12 +422,12 @@ async function deny(ctx) {
 function getState(ctx) {
   if (!ctx.session.state) {
     ctx.session.state = {
-      step: "idle", // idle | entering_order | entering_time | selecting_items
+      step: "idle",
       orderNo: "",
       prepMinutes: 25,
       cart: {},
       cat: null,
-      orderId: null, // создаём заказ сразу после ввода времени
+      orderId: null,
     };
   }
   return ctx.session.state;
