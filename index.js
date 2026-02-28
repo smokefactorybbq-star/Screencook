@@ -48,9 +48,37 @@ const CATEGORIES = [
 ];
 
 const MENU_BY_CAT = {
-  soups: ["Борщ", "Солянка", "Щи", "Харчо", "Минестроне", "Грибной суп", "Куриный суп", "Гороховый суп"],
-  mains: ["Пельмени", "Болоньезе", "Макароны по-флотски", "Овощное рагу", "Гуляш", "Плов", "Тушёнка"],
-  sides: ["Пюре", "Рис", "Гречка", "Лапша", "Картошка тушёная", "Капуста тушёная", "Хлеб", "Соус BBQ", "Соус чесночный", "Соус острый"],
+  soups: [
+    "Борщ",
+    "Солянка",
+    "Щи",
+    "Харчо",
+    "Минестроне",
+    "Грибной суп",
+    "Куриный суп",
+    "Гороховый суп",
+  ],
+  mains: [
+    "Пельмени",
+    "Болоньезе",
+    "Макароны по-флотски",
+    "Овощное рагу",
+    "Гуляш",
+    "Плов",
+    "Тушёнка",
+  ],
+  sides: [
+    "Пюре",
+    "Рис",
+    "Гречка",
+    "Лапша",
+    "Картошка тушёная",
+    "Капуста тушёная",
+    "Хлеб",
+    "Соус BBQ",
+    "Соус чесночный",
+    "Соус острый",
+  ],
   grill: ["Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Колбаски", "Сосиски"],
   salads: ["Салат", "Огурец свежий", "Кимчи", "Морковь по-корейски"],
 };
@@ -113,7 +141,7 @@ app.get("/api/orders", (_req, res) => {
 });
 
 // ==========================
-// SCREEN HTML (TV SAFE)
+// SCREEN HTML (TV SAFE, NO FONT JUMP, DYNAMIC CARD HEIGHT)
 // ==========================
 function screenHtml() {
   return `<!doctype html>
@@ -144,34 +172,28 @@ function screenHtml() {
     body{
       background:var(--bg);
       color:var(--text);
-      overflow:hidden;
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+
+      /* важно: даём странице расти по высоте */
+      overflow-y:auto;
+      overflow-x:hidden;
     }
 
-    /* фиксированный контейнер — работает на ТВ стабильнее, чем 100% + padding */
     .stage{
-      position:fixed;
-      left:var(--safe);
-      right:var(--safe);
-      top:var(--safe);
-      bottom:var(--safe);
-      overflow:hidden;
+      position:relative;
+      padding: var(--safe);
+      min-height:100vh;
     }
 
-    /* 10 карточек: 5 в ряд, 2 ряда (flex wrap) */
+    /* 10 карточек: 5 колонок, 2 ряда минимум, высота карточек = контент */
     .wrap{
-      width:100%;
-      height:100%;
-      display:flex;
-      flex-wrap:wrap;
-      align-content:stretch;
-      justify-content:space-between;
+      display:grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: var(--gap);
+      align-items:start;
     }
 
     .card{
-      width: calc((100% - (var(--gap) * 4)) / 5);
-      height: calc((100% - var(--gap)) / 2);
-      margin-bottom: var(--gap);
       background:var(--cell);
       border:1px solid var(--border);
       border-radius:18px;
@@ -179,11 +201,7 @@ function screenHtml() {
       display:flex;
       flex-direction:column;
       min-width:0;
-      min-height:0;
       box-shadow:0 12px 30px rgba(0,0,0,.35);
-    }
-    .card:nth-child(n+6){
-      margin-bottom: 0;
     }
 
     .top{
@@ -196,30 +214,47 @@ function screenHtml() {
       gap: 10px;
       min-height:0;
     }
-    .orderNo,.remain{
+
+    /* СТАБИЛЬНЫЙ ШРИФТ (без автоподгона) */
+    .orderNo{
+      flex:1 1 auto;
+      min-width:0;
       font-weight:1000;
-      line-height:1;
+      line-height:1.05;
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
-      min-width:0;
+      font-size: clamp(16px, 1.25vw, 34px);
     }
-    .orderNo{ flex:1 1 auto; }
-    .remain{ flex:0 0 auto; }
+
+    .remain{
+      flex:0 0 auto;
+      font-weight:1000;
+      line-height:1;
+      white-space:nowrap;
+      font-size: clamp(16px, 1.15vw, 32px);
+
+      /* цифры одинаковой ширины => таймер не "прыгает" */
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.5px;
+    }
 
     .items{
       flex:1 1 auto;
       padding: 12px 14px 14px;
-      overflow:hidden;
-      min-height:0;
+
+      /* НЕ режем контент — карточка растет */
+      overflow:visible;
+
       display:flex;
       flex-direction:column;
       gap: 8px;
+      min-height:0;
     }
 
     .item{
       display:flex;
-      align-items:center;
+      align-items:flex-start;
       gap: 10px;
       padding: 10px 12px;
       border:1px solid rgba(255,255,255,.10);
@@ -227,32 +262,35 @@ function screenHtml() {
       background: rgba(255,255,255,.03);
       min-width:0;
     }
+
     .name{
       flex:1 1 auto;
       min-width:0;
       font-weight:950;
       line-height:1.12;
+
+      /* показываем полностью */
       white-space:normal;
       word-break:break-word;
-      overflow:hidden;
-      display:-webkit-box;
-      -webkit-line-clamp:2;
-      -webkit-box-orient:vertical;
+
+      font-size: clamp(12px, 0.95vw, 22px);
     }
+
     .qty{
       flex:0 0 auto;
       font-weight:1000;
       color: rgba(255,255,255,.75);
       white-space:nowrap;
+      font-size: clamp(12px, 0.95vw, 22px);
+      font-variant-numeric: tabular-nums;
     }
 
     .placeholder{
-      flex:1 1 auto;
-      display:flex;
-      align-items:center;
-      justify-content:center;
+      padding: 18px 14px 20px;
       color:rgba(255,255,255,.28);
       font-weight:1000;
+      text-align:center;
+      font-size: clamp(14px, 1.1vw, 24px);
     }
 
     .blink{
@@ -264,7 +302,6 @@ function screenHtml() {
       100%{ filter:brightness(1); }
     }
 
-    /* маленький debug внизу слева */
     .dbg{
       position:fixed;
       left:10px;
@@ -278,6 +315,7 @@ function screenHtml() {
       border-radius:12px;
       z-index:9999;
       white-space:pre-wrap;
+      pointer-events:none;
     }
   </style>
 </head>
@@ -292,6 +330,9 @@ function screenHtml() {
   var wrap = document.getElementById('wrap');
   var dbg = document.getElementById('dbg');
   var TOTAL = 10;
+
+  var lastSig = "";
+  var hasRenderedOnce = false;
 
   function esc(s){
     s = String(s || "");
@@ -314,28 +355,7 @@ function screenHtml() {
     return "var(--green)";
   }
 
-  function fitText(el, maxPx, minPx){
-    if (!el) return;
-    var size = maxPx;
-    el.style.fontSize = size + "px";
-    while (size > minPx && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight)){
-      size -= 1;
-      el.style.fontSize = size + "px";
-    }
-  }
-
-  function fitItems(box, maxPx, minPx){
-    if (!box) return;
-    var size = maxPx;
-    box.style.fontSize = size + "px";
-    box.style.lineHeight = "1.10";
-    while (size > minPx && box.scrollHeight > box.clientHeight){
-      size -= 1;
-      box.style.fontSize = size + "px";
-    }
-  }
-
-  function makeCard(o, now){
+  function makeCard(o){
     var card = document.createElement("div");
     card.className = "card";
 
@@ -343,13 +363,6 @@ function screenHtml() {
       card.innerHTML = '<div class="placeholder">—</div>';
       return card;
     }
-
-    var remMs = (o.endsAt || 0) - now;
-    var remMin = remMs / 60000;
-    var color = remainColor(remMin);
-    var timerText = (remMs <= 0) ? "READY" : mmss(remMs);
-
-    if (remMs > 0 && remMs <= 5*60*1000) card.className = "card blink";
 
     var items = (o.items && o.items.length) ? o.items : null;
 
@@ -367,33 +380,56 @@ function screenHtml() {
 
     card.innerHTML =
       '<div class="top">'+
-        '<div class="orderNo" data-fit="order">'+esc(o.orderNo || "—")+'</div>'+
-        '<div class="remain" data-fit="remain" style="color:'+color+'">'+timerText+'</div>'+
+        '<div class="orderNo">'+esc(o.orderNo || "—")+'</div>'+
+        '<div class="remain" data-endsat="'+(o.endsAt||0)+'">--:--</div>'+
       '</div>'+
-      '<div class="items" data-fit="items">'+itemsHtml+'</div>';
+      '<div class="items">'+itemsHtml+'</div>';
 
     return card;
   }
 
   function render(list){
     wrap.innerHTML = "";
-    var now = Date.now();
     for (var i=0;i<TOTAL;i++){
       var o = (list && list[i]) ? list[i] : null;
-      wrap.appendChild(makeCard(o, now));
+      wrap.appendChild(makeCard(o));
     }
+    hasRenderedOnce = true;
+    updateTimers();
+  }
 
-    // подгон шрифтов после отрисовки
-    setTimeout(function(){
-      var orders = wrap.querySelectorAll('[data-fit="order"]');
-      for (var i=0;i<orders.length;i++) fitText(orders[i], 36, 10);
+  function updateTimers(){
+    if (!hasRenderedOnce) return;
 
-      var remains = wrap.querySelectorAll('[data-fit="remain"]');
-      for (var j=0;j<remains.length;j++) fitText(remains[j], 34, 10);
+    var now = Date.now();
+    var nodes = wrap.querySelectorAll(".remain");
+    for (var i=0;i<nodes.length;i++){
+      var el = nodes[i];
+      var endsAt = Number(el.getAttribute("data-endsat") || 0);
+      if (!endsAt){
+        el.textContent = "--:--";
+        el.style.color = "rgba(255,255,255,.35)";
+        continue;
+      }
 
-      var boxes = wrap.querySelectorAll('[data-fit="items"]');
-      for (var k=0;k<boxes.length;k++) fitItems(boxes[k], 22, 8);
-    }, 0);
+      var remMs = endsAt - now;
+      var remMin = remMs / 60000;
+      var color = remainColor(remMin);
+
+      el.textContent = (remMs <= 0) ? "READY" : mmss(remMs);
+      el.style.color = color;
+
+      // blink если меньше 5 минут
+      var card = el;
+      while (card && (!card.className || card.className.indexOf("card") === -1)) card = card.parentNode;
+      if (card){
+        if (remMs > 0 && remMs <= 5*60*1000){
+          if (card.className.indexOf("blink") === -1) card.className = "card blink";
+        } else {
+          card.className = "card";
+        }
+      }
+    }
   }
 
   function xhrJson(url, cb){
@@ -420,21 +456,49 @@ function screenHtml() {
     }
   }
 
-  function tick(){
+  // сигнатура чтобы не перерисовывать каждую секунду
+  function signature(list){
+    try{
+      var slim = (list||[]).slice(0, TOTAL).map(function(o){
+        if (!o) return null;
+        return {
+          id: o.id,
+          orderNo: o.orderNo,
+          endsAt: o.endsAt,
+          items: (o.items||[]).map(function(it){ return [it.name, it.qty]; })
+        };
+      });
+      return JSON.stringify(slim);
+    }catch(e){
+      return String(Date.now());
+    }
+  }
+
+  function poll(){
     xhrJson("/api/orders", function(err, data){
       if (err){
         dbg.textContent = "API ERROR\\n" + String(err.message || err);
-        // покажем пустые
-        render([]);
         return;
       }
-      dbg.textContent = "API OK\\nORDERS: " + (data && data.length ? data.length : 0);
-      render(data || []);
+
+      var list = data || [];
+      var sig = signature(list);
+
+      if (sig !== lastSig){
+        lastSig = sig;
+        render(list);
+      }
+
+      dbg.textContent = "API OK\\nORDERS: " + (list && list.length ? list.length : 0);
     });
   }
 
-  tick();
-  setInterval(tick, 1000);
+  // 1) таймеры — каждую секунду (без перерисовки)
+  setInterval(updateTimers, 1000);
+
+  // 2) заказы — раз в 2500мс (перерисовка только если изменились)
+  poll();
+  setInterval(poll, 2500);
 })();
 </script>
 </body>
@@ -507,8 +571,14 @@ function categoriesKeyboard() {
     if (b) row.push(Markup.button.callback(b.label, `cat:${b.key}`));
     rows.push(row);
   }
-  rows.push([Markup.button.callback(BTN_CLEAR, "clear"), Markup.button.callback(BTN_SEND, "send")]);
-  rows.push([Markup.button.callback(BTN_EDIT, "edit"), Markup.button.callback(BTN_REMOVE_MODE, "remove_mode")]);
+  rows.push([
+    Markup.button.callback(BTN_CLEAR, "clear"),
+    Markup.button.callback(BTN_SEND, "send"),
+  ]);
+  rows.push([
+    Markup.button.callback(BTN_EDIT, "edit"),
+    Markup.button.callback(BTN_REMOVE_MODE, "remove_mode"),
+  ]);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -524,8 +594,14 @@ function dishesKeyboard(catKey) {
     rows.push(row);
   }
 
-  rows.push([Markup.button.callback(BTN_BACK_CATS, "cats"), Markup.button.callback(BTN_CLEAR, "clear")]);
-  rows.push([Markup.button.callback(BTN_SEND, "send"), Markup.button.callback(BTN_REMOVE_MODE, "remove_mode")]);
+  rows.push([
+    Markup.button.callback(BTN_BACK_CATS, "cats"),
+    Markup.button.callback(BTN_CLEAR, "clear"),
+  ]);
+  rows.push([
+    Markup.button.callback(BTN_SEND, "send"),
+    Markup.button.callback(BTN_REMOVE_MODE, "remove_mode"),
+  ]);
   rows.push([Markup.button.callback(BTN_EDIT, "edit")]);
 
   return Markup.inlineKeyboard(rows);
@@ -533,8 +609,7 @@ function dishesKeyboard(catKey) {
 
 async function showCategories(ctx) {
   const st = getState(ctx);
-  const text =
-`🧾 Создание заказа
+  const text = `🧾 Создание заказа
 
 Номер: ${st.orderNo || "—"}
 Время: ${st.prepMinutes} мин
@@ -545,8 +620,11 @@ ${cartSummary(st.cart)}
 Выбери категорию:`;
 
   if (ctx.updateType === "callback_query") {
-    try { await ctx.editMessageText(text, categoriesKeyboard()); }
-    catch { await ctx.reply(text, categoriesKeyboard()); }
+    try {
+      await ctx.editMessageText(text, categoriesKeyboard());
+    } catch {
+      await ctx.reply(text, categoriesKeyboard());
+    }
   } else {
     await ctx.reply(text, categoriesKeyboard());
   }
@@ -555,10 +633,9 @@ ${cartSummary(st.cart)}
 async function showDishes(ctx, catKey) {
   const st = getState(ctx);
   st.cat = catKey;
-  const catLabel = CATEGORIES.find(c => c.key === catKey)?.label || catKey;
+  const catLabel = CATEGORIES.find((c) => c.key === catKey)?.label || catKey;
 
-  const text =
-`📂 ${catLabel}
+  const text = `📂 ${catLabel}
 
 Номер: ${st.orderNo || "—"} | Время: ${st.prepMinutes} мин
 
@@ -568,8 +645,11 @@ ${cartSummary(st.cart)}
 Нажимай блюда (➕):`;
 
   if (ctx.updateType === "callback_query") {
-    try { await ctx.editMessageText(text, dishesKeyboard(catKey)); }
-    catch { await ctx.reply(text, dishesKeyboard(catKey)); }
+    try {
+      await ctx.editMessageText(text, dishesKeyboard(catKey));
+    } catch {
+      await ctx.reply(text, dishesKeyboard(catKey));
+    }
   } else {
     await ctx.reply(text, dishesKeyboard(catKey));
   }
@@ -608,7 +688,10 @@ bot.on("text", async (ctx) => {
     if (st.orderId) deleteKitchenOrder(st.orderId);
     st.orderNo = txt;
     st.step = "entering_time";
-    await ctx.reply("Введите время приготовления (минуты 1–240), например 20:", mainKeyboard());
+    await ctx.reply(
+      "Введите время приготовления (минуты 1–240), например 20:",
+      mainKeyboard()
+    );
     return;
   }
 
@@ -697,7 +780,7 @@ bot.action("remove_mode", async (ctx) => {
   if (!keys.length) return ctx.reply("Корзина пустая.", mainKeyboard());
 
   const rows = keys.map((k) => [
-    Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`)
+    Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`),
   ]);
   rows.push([Markup.button.callback("⬅️ Назад", st.cat ? "back_to_dishes" : "cats")]);
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
@@ -733,7 +816,12 @@ bot.action("send", async (ctx) => {
   if (!items.length) return ctx.reply("❌ Корзина пустая.", mainKeyboard());
 
   const ok = updateKitchenOrderItems(st.orderId, items);
-  if (!ok) return ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+  if (!ok) {
+    return ctx.reply(
+      "❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.",
+      mainKeyboard()
+    );
+  }
 
   await ctx.reply(`✅ Блюда появились на ТВ`, mainKeyboard());
 
