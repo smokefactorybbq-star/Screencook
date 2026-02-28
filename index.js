@@ -48,9 +48,37 @@ const CATEGORIES = [
 ];
 
 const MENU_BY_CAT = {
-  soups: ["Борщ", "Солянка", "Щи", "Харчо", "Минестроне", "Грибной суп", "Куриный суп", "Гороховый суп"],
-  mains: ["Пельмени", "Болоньезе", "Макароны по-флотски", "Овощное рагу", "Гуляш", "Плов", "Тушёнка"],
-  sides: ["Пюре", "Рис", "Гречка", "Лапша", "Картошка тушёная", "Капуста тушёная", "Хлеб", "Соус BBQ", "Соус чесночный", "Соус острый"],
+  soups: [
+    "Борщ",
+    "Солянка",
+    "Щи",
+    "Харчо",
+    "Минестроне",
+    "Грибной суп",
+    "Куриный суп",
+    "Гороховый суп",
+  ],
+  mains: [
+    "Пельмени",
+    "Болоньезе",
+    "Макароны по-флотски",
+    "Овощное рагу",
+    "Гуляш",
+    "Плов",
+    "Тушёнка",
+  ],
+  sides: [
+    "Пюре",
+    "Рис",
+    "Гречка",
+    "Лапша",
+    "Картошка тушёная",
+    "Капуста тушёная",
+    "Хлеб",
+    "Соус BBQ",
+    "Соус чесночный",
+    "Соус острый",
+  ],
   grill: ["Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Колбаски", "Сосиски"],
   salads: ["Салат", "Огурец свежий", "Кимчи", "Морковь по-корейски"],
 };
@@ -114,7 +142,7 @@ app.get("/api/orders", (_req, res) => {
 
 // ==========================
 // SCREEN HTML (10 windows fixed, up to 15 items visible)
-// - orderNo/time font unchanged (as you asked)
+// - orderNo/time font unchanged
 // - items font tuned to fit 15 rows
 // - no auto-fit loops => no font jumping
 // ==========================
@@ -156,7 +184,7 @@ function screenHtml() {
     body{
       background:var(--bg);
       color:var(--text);
-      overflow:hidden; /* FIXED 10 windows, no page scrolling */
+      overflow:hidden;
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
     }
 
@@ -205,7 +233,7 @@ function screenHtml() {
       min-height:0;
     }
 
-    /* ОСТАВЛЯЕМ КАК ЕСТЬ (шрифт номера/времени) */
+    /* ШРИФТ НОМЕРА/ВРЕМЕНИ ОСТАВЛЯЕМ */
     .orderNo{
       flex:1 1 auto;
       min-width:0;
@@ -230,7 +258,7 @@ function screenHtml() {
     .items{
       flex:1 1 auto;
       padding: 10px 12px 12px;
-      overflow:hidden; /* фиксируем 10 окон, поэтому режем по 15 строк */
+      overflow:hidden; /* фикс 10 окон, режем по 15 строк */
       min-height:0;
       display:flex;
       flex-direction:column;
@@ -248,7 +276,7 @@ function screenHtml() {
       min-width:0;
     }
 
-    /* ОДНА СТРОКА, чтобы уместить 15 позиций */
+    /* ОДНА СТРОКА => до 15 позиций */
     .name{
       flex:1 1 auto;
       min-width:0;
@@ -380,7 +408,6 @@ function screenHtml() {
         itemsHtml += '<div class="item"><div class="name">'+name+'</div><div class="qty">x'+qty+'</div></div>';
         shown++;
       }
-
       if (items.length > MAX_ITEMS){
         var rest = items.length - MAX_ITEMS;
         itemsHtml += '<div class="more">+ ещё ' + rest + ' поз.</div>';
@@ -430,7 +457,7 @@ function screenHtml() {
       el.textContent = (remMs <= 0) ? "READY" : mmss(remMs);
       el.style.color = color;
 
-      // blink если меньше 5 минут
+      // blink если < 5 минут
       var card = el;
       while (card && (!card.className || card.className.indexOf("card") === -1)) card = card.parentNode;
       if (card){
@@ -467,7 +494,6 @@ function screenHtml() {
     }
   }
 
-  // сигнатура чтобы не перерисовывать постоянно (шрифты тогда не "пляшут")
   function signature(list){
     try{
       var slim = (list||[]).slice(0, TOTAL).map(function(o){
@@ -476,7 +502,6 @@ function screenHtml() {
           id: o.id,
           orderNo: o.orderNo,
           endsAt: o.endsAt,
-          // ограничим для сигнатуры первыми 15, чтобы сравнение было лёгким
           items: (o.items||[]).slice(0, MAX_ITEMS).map(function(it){ return [it.name, it.qty]; }),
           itemsLen: (o.items||[]).length
         };
@@ -506,10 +531,7 @@ function screenHtml() {
     });
   }
 
-  // 1) таймеры — каждую секунду (без перерисовки)
   setInterval(updateTimers, 1000);
-
-  // 2) заказы — раз в 2500мс (перерисовка только если изменились)
   poll();
   setInterval(poll, 2500);
 })();
@@ -572,7 +594,7 @@ function mainKeyboard() {
 function cartSummary(cart) {
   const entries = Object.entries(cart);
   if (!entries.length) return "— пусто —";
-  return entries.map(([name, qty]) => `• ${name}    x${qty}`).join("\n");
+  return entries.map(([name, qty]) => "• " + name + "    x" + qty).join("\n");
 }
 
 function categoriesKeyboard() {
@@ -580,8 +602,8 @@ function categoriesKeyboard() {
   for (let i = 0; i < CATEGORIES.length; i += 2) {
     const a = CATEGORIES[i];
     const b = CATEGORIES[i + 1];
-    const row = [Markup.button.callback(a.label, `cat:${a.key}`)];
-    if (b) row.push(Markup.button.callback(b.label, `cat:${b.key}`));
+    const row = [Markup.button.callback(a.label, "cat:" + a.key)];
+    if (b) row.push(Markup.button.callback(b.label, "cat:" + b.key));
     rows.push(row);
   }
   rows.push([Markup.button.callback(BTN_CLEAR, "clear"), Markup.button.callback(BTN_SEND, "send")]);
@@ -596,8 +618,8 @@ function dishesKeyboard(catKey) {
   for (let i = 0; i < dishes.length; i += 2) {
     const a = dishes[i];
     const b = dishes[i + 1];
-    const row = [Markup.button.callback(`➕ ${a}`, `add:${a}`)];
-    if (b) row.push(Markup.button.callback(`➕ ${b}`, `add:${b}`));
+    const row = [Markup.button.callback("➕ " + a, "add:" + a)];
+    if (b) row.push(Markup.button.callback("➕ " + b, "add:" + b));
     rows.push(row);
   }
 
@@ -611,15 +633,12 @@ function dishesKeyboard(catKey) {
 async function showCategories(ctx) {
   const st = getState(ctx);
   const text =
-`🧾 Создание заказа
-
-Номер: ${st.orderNo || "—"}
-Время: ${st.prepMinutes} мин
-
-Корзина:
-${cartSummary(st.cart)}
-
-Выбери категорию:`;
+    "🧾 Создание заказа\n\n" +
+    "Номер: " + (st.orderNo || "—") + "\n" +
+    "Время: " + st.prepMinutes + " мин\n\n" +
+    "Корзина:\n" +
+    cartSummary(st.cart) +
+    "\n\nВыбери категорию:";
 
   if (ctx.updateType === "callback_query") {
     try { await ctx.editMessageText(text, categoriesKeyboard()); }
@@ -632,17 +651,14 @@ ${cartSummary(st.cart)}
 async function showDishes(ctx, catKey) {
   const st = getState(ctx);
   st.cat = catKey;
-  const catLabel = CATEGORIES.find(c => c.key === catKey)?.label || catKey;
+  const catLabel = (CATEGORIES.find((c) => c.key === catKey)?.label) || catKey;
 
   const text =
-`📂 ${catLabel}
-
-Номер: ${st.orderNo || "—"} | Время: ${st.prepMinutes} мин
-
-Корзина:
-${cartSummary(st.cart)}
-
-Нажимай блюда (➕):`;
+    "📂 " + catLabel + "\n\n" +
+    "Номер: " + (st.orderNo || "—") + " | Время: " + st.prepMinutes + " мин\n\n" +
+    "Корзина:\n" +
+    cartSummary(st.cart) +
+    "\n\nНажимай блюда (➕):";
 
   if (ctx.updateType === "callback_query") {
     try { await ctx.editMessageText(text, dishesKeyboard(catKey)); }
@@ -708,7 +724,7 @@ bot.on("text", async (ctx) => {
     st.orderId = addKitchenOrder(st.orderNo.trim(), st.prepMinutes);
 
     st.step = "selecting_items";
-    await ctx.reply(`⏱ Таймер уже идет на ТВ: ${PUBLIC_URL}/screen`, mainKeyboard());
+    await ctx.reply("⏱ Таймер уже идет на ТВ: " + PUBLIC_URL + "/screen", mainKeyboard());
     await showCategories(ctx);
     return;
   }
@@ -774,7 +790,7 @@ bot.action("remove_mode", async (ctx) => {
   if (!keys.length) return ctx.reply("Корзина пустая.", mainKeyboard());
 
   const rows = keys.map((k) => [
-    Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`)
+    Markup.button.callback("➖ " + k + " (x" + st.cart[k] + ")", "rem:" + k),
   ]);
   rows.push([Markup.button.callback("⬅️ Назад", st.cat ? "back_to_dishes" : "cats")]);
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
@@ -796,7 +812,7 @@ bot.action(/rem:(.+)/, async (ctx) => {
   const v = (st.cart[name] || 0) - 1;
   if (v <= 0) delete st.cart[name];
   else st.cart[name] = v;
-  await ctx.reply(\`Ок: \${name}\`, mainKeyboard());
+  await ctx.reply("Ок: " + name, mainKeyboard());
 });
 
 bot.action("send", async (ctx) => {
@@ -810,9 +826,14 @@ bot.action("send", async (ctx) => {
   if (!items.length) return ctx.reply("❌ Корзина пустая.", mainKeyboard());
 
   const ok = updateKitchenOrderItems(st.orderId, items);
-  if (!ok) return ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+  if (!ok) {
+    return ctx.reply(
+      "❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.",
+      mainKeyboard()
+    );
+  }
 
-  await ctx.reply(\`✅ Блюда появились на ТВ\`, mainKeyboard());
+  await ctx.reply("✅ Блюда появились на ТВ", mainKeyboard());
 
   st.step = "idle";
   st.orderNo = "";
