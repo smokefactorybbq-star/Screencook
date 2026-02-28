@@ -1,4 +1,4 @@
-// index.js (ESM)
+// index.js (ESM) — KITCHEN PRO
 // ТВ-экран: / (или /screen)
 // API: /api/orders
 // Webhook: /tg/<WEBHOOK_SECRET>
@@ -118,7 +118,7 @@ function screenHtml() {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Screen</title>
+  <title>Kitchen PRO</title>
   <style>
     :root{
       --bg:#050813;
@@ -131,12 +131,12 @@ function screenHtml() {
       --red:#ff3b30;
       --ready:#aab2c2;
 
-      /* SAFE AREA для ТВ-оверскана (тут точно будет работать) */
-      --safe: 40px;
-
       --gap: 10px;
       --cols: 5;
       --rows: 4;
+
+      /* анти-оверскан */
+      --safe: 40px;
     }
     *{ box-sizing:border-box; }
     html, body { height:100%; width:100%; }
@@ -146,8 +146,6 @@ function screenHtml() {
       color:var(--text);
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
       overflow:hidden;
-
-      /* вот это гарантированно сдвигает контент внутрь */
       padding: var(--safe);
     }
 
@@ -170,19 +168,18 @@ function screenHtml() {
       min-width:0;
       min-height:0;
       box-shadow:0 12px 30px rgba(0,0,0,.35);
+      position:relative;
     }
 
-    /* верхняя строка: номер слева, таймер справа */
     .top{
-      /* вместо процентов — так стабильнее на разных высотах */
       flex: 0 0 auto;
-      padding: .9em 1.05em .55em;
+      padding: .95em 1.1em .6em;
       border-bottom:1px solid rgba(255,255,255,.10);
       display:flex;
       align-items:flex-end;
       justify-content:space-between;
       gap: 1em;
-      min-height: 0;
+      min-height:0;
     }
     .orderNo, .remain{
       font-weight:1000;
@@ -202,13 +199,13 @@ function screenHtml() {
       overflow:hidden;
       display:flex;
       flex-direction:column;
-      gap: .45em; /* em -> уменьшается со шрифтом */
+      gap: .45em;
       min-height:0;
     }
 
     .item{
       display:flex;
-      justify-content:space-between;
+      align-items:center;
       gap: .6em;
       padding: .55em .75em;
       border:1px solid rgba(255,255,255,.09);
@@ -218,24 +215,24 @@ function screenHtml() {
     }
 
     .name{
+      flex: 1 1 auto;
       min-width:0;
       font-weight:950;
+      line-height:1.12;
       white-space:normal;
+      word-break:break-word;
 
-      /* перенос до 2 строк */
+      /* перенос максимум на 2 строки */
       display:-webkit-box;
       -webkit-line-clamp:2;
       -webkit-box-orient:vertical;
       overflow:hidden;
-
-      line-height:1.12;
     }
     .qty{
       flex:0 0 auto;
       white-space:nowrap;
       color:rgba(255,255,255,.75);
       font-weight:1000;
-      margin-left:.25em;
     }
 
     .placeholder{
@@ -249,26 +246,104 @@ function screenHtml() {
       padding: 1em;
     }
 
-    .empty{
-      height:100%;
+    /* МИГАНИЕ при <=5 минут */
+    .blink{
+      animation: blink 0.9s steps(2, end) infinite;
+    }
+    @keyframes blink{
+      0%{ filter: brightness(1); }
+      50%{ filter: brightness(1.6); }
+      100%{ filter: brightness(1); }
+    }
+
+    /* Панель управления (в углу) */
+    .panel{
+      position:fixed;
+      right: 10px;
+      bottom: 10px;
       display:flex;
-      align-items:center;
-      justify-content:center;
-      color:rgba(255,255,255,.18);
-      font-weight:1000;
-      font-size:28px;
+      gap:8px;
+      z-index:9999;
+      opacity:.75;
+      user-select:none;
+    }
+    .btn{
+      font-size:14px;
+      font-weight:900;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.15);
+      background: rgba(15,23,48,.75);
+      color:#fff;
+      cursor:pointer;
+    }
+    .btn:active{ transform: scale(.98); }
+    .tag{
+      position:fixed;
+      left: 10px;
+      bottom: 10px;
+      font-size:12px;
+      color:rgba(255,255,255,.55);
+      font-weight:900;
+      z-index:9999;
     }
   </style>
 </head>
 <body>
   <div class="grid" id="grid"></div>
 
+  <div class="panel">
+    <button class="btn" id="safeMinus">SAFE-</button>
+    <button class="btn" id="safePlus">SAFE+</button>
+    <button class="btn" id="soundBtn">SOUND</button>
+    <button class="btn" id="reloadBtn">RELOAD</button>
+  </div>
+  <div class="tag" id="tag"></div>
+
 <script>
   const grid = document.getElementById('grid');
+  const tag = document.getElementById('tag');
+
   const COLS = 5;
   const ROWS = 4;
-  const TOTAL_ORDERS = 10;
+  const MAX_ORDERS = 10;
 
+  // ==== settings (persist) ====
+  const LS_SAFE = 'kitchen_safe';
+  const LS_SOUND = 'kitchen_sound';
+
+  function getSafe(){
+    const v = Number(localStorage.getItem(LS_SAFE));
+    return Number.isFinite(v) ? v : 40;
+  }
+  function setSafe(v){
+    localStorage.setItem(LS_SAFE, String(v));
+    document.documentElement.style.setProperty('--safe', v + 'px');
+    tag.textContent = 'SAFE: ' + v + 'px' + ' | SOUND: ' + (soundEnabled ? 'ON' : 'OFF');
+  }
+
+  let soundEnabled = (localStorage.getItem(LS_SOUND) ?? 'on') === 'on';
+
+  function setSound(on){
+    soundEnabled = !!on;
+    localStorage.setItem(LS_SOUND, soundEnabled ? 'on' : 'off');
+    tag.textContent = 'SAFE: ' + getSafe() + 'px' + ' | SOUND: ' + (soundEnabled ? 'ON' : 'OFF');
+  }
+
+  // apply stored safe
+  setSafe(getSafe());
+  setSound(soundEnabled);
+
+  document.getElementById('safePlus').onclick = () => setSafe(Math.min(120, getSafe() + 5));
+  document.getElementById('safeMinus').onclick = () => setSafe(Math.max(0, getSafe() - 5));
+  document.getElementById('soundBtn').onclick = async () => {
+    setSound(!soundEnabled);
+    // пробуем “разлочить” звук по клику
+    if (soundEnabled) { try { await beep(0.02, 880); } catch{} }
+  };
+  document.getElementById('reloadBtn').onclick = () => location.reload();
+
+  // ==== helpers ====
   function fmt2(n){ return String(n).padStart(2,'0'); }
   function mmss(ms){
     const s = Math.max(0, Math.floor(ms/1000));
@@ -285,6 +360,24 @@ function screenHtml() {
     return 'var(--green)';
   }
 
+  // === Sound (WebAudio beep) ===
+  let audioCtx = null;
+  async function beep(duration=0.08, freq=880){
+    if (!soundEnabled) return;
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'square';
+    o.frequency.value = freq;
+    g.gain.value = 0.02; // тихо, но слышно
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    o.start();
+    o.stop(audioCtx.currentTime + duration);
+  }
+
   // Подгон текста (ширина+высота)
   function fitText(el, maxPx, minPx){
     if (!el) return;
@@ -296,7 +389,7 @@ function screenHtml() {
     }
   }
 
-  // Уменьшить шрифт списка блюд, пока он полностью не влезет
+  // Подгон шрифта списка блюд: уменьшаем, пока всё не влезет
   function fitItems(container, maxPx, minPx){
     if (!container) return;
     let size = maxPx;
@@ -308,16 +401,15 @@ function screenHtml() {
     }
   }
 
-  // Сколько "рядов" занимает карточка (1..3) по количеству позиций
+  // сколько рядов (1..3) по кол-ву позиций
   function spanFor(itemsCount){
     if (itemsCount >= 12) return 3;
     if (itemsCount >= 6) return 2;
     return 1;
   }
 
-  // Простой укладчик по колонкам (bin packing в сетку COLS x ROWS)
+  // укладчик в сетку COLS x ROWS
   function placeCards(cards){
-    // occupancy[r][c]
     const occ = Array.from({length: ROWS}, () => Array(COLS).fill(false));
     const placed = [];
 
@@ -336,10 +428,8 @@ function screenHtml() {
     }
 
     for (const card of cards){
-      let span = card.span;
-
-      // если не помещается — уменьшаем
-      for (let trySpan = span; trySpan >= 1; trySpan--){
+      // сперва как надо, если не влезет — уменьшаем span
+      for (let trySpan = card.span; trySpan >= 1; trySpan--){
         let done = false;
         for (let r=0; r<ROWS; r++){
           for (let c=0; c<COLS; c++){
@@ -354,38 +444,33 @@ function screenHtml() {
         if (done) break;
       }
     }
-
     return placed;
   }
+
+  // READY sound: чтобы не пищал каждую секунду — запоминаем уже “пропищанные”
+  const readyBeeped = new Set();
 
   function render(orders){
     grid.innerHTML = "";
     const now = Date.now();
-    const list = Array.isArray(orders) ? orders.slice(0, TOTAL_ORDERS) : [];
+    const list = Array.isArray(orders) ? orders.slice(0, MAX_ORDERS) : [];
 
-    // подготовка карточек: считаем span
-    const cards = list.map(o => {
-      const items = Array.isArray(o.items) ? o.items : [];
-      return {
-        o,
-        itemsCount: items.length,
-        span: spanFor(items.length)
-      };
-    });
-
-    const placed = placeCards(cards);
-
-    // нарисуем 20 пустых клеток фоном не нужно — просто показываем карточки
-    // но если нет заказов — покажем 1 пустую
-    if (!placed.length){
+    if (!list.length){
       const empty = document.createElement('div');
       empty.className = 'card';
       empty.style.gridColumn = '1 / span 5';
       empty.style.gridRow = '1 / span 4';
-      empty.innerHTML = '<div class="empty">—</div>';
+      empty.innerHTML = '<div class="placeholder">Нет заказов</div>';
       grid.appendChild(empty);
       return;
     }
+
+    const cards = list.map(o => {
+      const items = Array.isArray(o.items) ? o.items : [];
+      return { o, span: spanFor(items.length) };
+    });
+
+    const placed = placeCards(cards);
 
     for (const p of placed){
       const o = p.o;
@@ -395,6 +480,7 @@ function screenHtml() {
       const timerText = (remMs <= 0) ? 'READY' : mmss(remMs);
 
       const items = Array.isArray(o.items) ? o.items : [];
+
       let itemsHtml = '';
       if (items.length){
         itemsHtml = items.map(it => {
@@ -408,6 +494,10 @@ function screenHtml() {
 
       const card = document.createElement('div');
       card.className = 'card';
+
+      // мигание при <=5 минут и >0
+      if (remMs > 0 && remMs <= 5 * 60_000) card.classList.add('blink');
+
       card.style.gridColumn = (p.c + 1) + ' / span 1';
       card.style.gridRow = (p.r + 1) + ' / span ' + p.span;
 
@@ -420,16 +510,21 @@ function screenHtml() {
       \`;
 
       grid.appendChild(card);
+
+      // SOUND: когда становится READY впервые
+      if (remMs <= 0 && !readyBeeped.has(o.id)){
+        readyBeeped.add(o.id);
+        // двойной сигнал
+        beep(0.07, 880);
+        setTimeout(() => beep(0.07, 660), 120);
+      }
     }
 
-    // Подгон шрифтов после layout
+    // подгон шрифтов после layout
     requestAnimationFrame(() => {
-      grid.querySelectorAll('[data-fit="order"]').forEach(el => fitText(el, 36, 10));
-      grid.querySelectorAll('[data-fit="remain"]').forEach(el => fitText(el, 32, 10));
-      grid.querySelectorAll('[data-fit="items"]').forEach(box => {
-        // по умолчанию достаточно крупно, но будет уменьшаться пока всё не влезет
-        fitItems(box, 22, 8);
-      });
+      grid.querySelectorAll('[data-fit="order"]').forEach(el => fitText(el, 40, 11));
+      grid.querySelectorAll('[data-fit="remain"]').forEach(el => fitText(el, 36, 11));
+      grid.querySelectorAll('[data-fit="items"]').forEach(box => fitItems(box, 24, 8));
     });
   }
 
@@ -445,6 +540,9 @@ function screenHtml() {
 
   tick();
   setInterval(tick, 1000);
+
+  // На всякий случай: если ТВ меняет размер/ориентацию
+  window.addEventListener('resize', () => tick());
 </script>
 </body>
 </html>`;
@@ -636,12 +734,12 @@ bot.on("text", async (ctx) => {
       return;
     }
 
-    // ✅ Запускаем таймер сразу
+    // ✅ Запускаем таймер сразу (даже пока выбирают блюда)
     const id = addKitchenOrder({ orderNo: st.orderNo.trim(), prepMinutes: st.prepMinutes });
     st.orderId = id;
 
     st.step = "selecting_items";
-    await ctx.reply(`⏱ Таймер уже идет на ТВ: ${PUBLIC_URL}/\nТеперь выбери блюда и нажми «Отправить на ТВ».`, mainKeyboard());
+    await ctx.reply(`⏱ Таймер уже идет на ТВ: ${PUBLIC_URL}/\nВыбери блюда и нажми «Отправить на ТВ».`, mainKeyboard());
     await showCategories(ctx);
     return;
   }
