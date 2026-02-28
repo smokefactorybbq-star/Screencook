@@ -1,6 +1,5 @@
 // index.js (ESM)
-// Один деплой: бот -> этот же сервер -> ТВ-экран.
-// Экран: /   (или /screen)
+// ТВ-экран: / (или /screen)
 // API: /api/orders
 // Webhook: /tg/<WEBHOOK_SECRET>
 
@@ -13,7 +12,7 @@ import { Telegraf, Markup, session } from "telegraf";
 // ENV
 // ==========================
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const PUBLIC_URL = process.env.PUBLIC_URL;       // например https://screencook-production.up.railway.app
+const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
@@ -126,15 +125,16 @@ function screenHtml() {
       --cell:#0f1730;
       --border:rgba(255,255,255,.10);
       --text:#ffffff;
-      --muted:rgba(255,255,255,.65);
+
       --green:#00ff66;
       --yellow:#ffd400;
       --red:#ff3b30;
-      --ready:#b0b7c6;
-      --gap:10px;
+      --ready:#aab2c2;
+
+      --gap:0px; /* НИКАКИХ полей — на весь экран */
     }
     *{ box-sizing:border-box; }
-    html, body { height:100%; }
+    html, body { height:100%; width:100%; }
     body{
       margin:0;
       background:var(--bg);
@@ -143,34 +143,31 @@ function screenHtml() {
       overflow:hidden;
     }
 
-    /* Сетка на весь экран */
+    /* Сетка на 100% экрана */
     .grid{
       height:100vh;
       width:100vw;
       display:grid;
+      grid-template-columns: repeat(5, 1fr);
+      grid-template-rows: repeat(2, 1fr);
       gap:var(--gap);
-      justify-content:center;
-      align-content:center;
-      padding:var(--gap);
-      /* размеры задаст JS, чтобы были квадраты */
     }
 
     .cell{
-      width: var(--cellSize, 200px);
-      height: var(--cellSize, 200px);
       background:var(--cell);
       border:1px solid var(--border);
-      border-radius:16px;
+      border-radius:0px; /* чтобы впритык и строго сеткой */
       overflow:hidden;
-      box-shadow:0 12px 30px rgba(0,0,0,.38);
       display:flex;
       flex-direction:column;
+      min-width:0;
+      min-height:0;
     }
 
     /* Верхняя полоса 10%: номер слева, таймер справа */
     .top{
       height:10%;
-      min-height:28px;
+      min-height:0;
       border-bottom:1px solid rgba(255,255,255,.08);
       padding:6px 10px;
       display:flex;
@@ -185,18 +182,20 @@ function screenHtml() {
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
+      min-width:0;
     }
     .orderNo{ flex: 1 1 auto; text-align:left; }
     .remain{ flex: 0 0 auto; text-align:right; }
 
-    /* Зона блюд 90% */
+    /* 90% — блюда */
     .itemsWrap{
       flex:1 1 auto;
-      padding:8px 8px 10px;
+      padding:8px 10px 10px;
       overflow:hidden;
       display:flex;
       flex-direction:column;
       gap:6px;
+      min-height:0;
     }
 
     .item{
@@ -205,7 +204,7 @@ function screenHtml() {
       gap:8px;
       padding:6px 8px;
       border:1px solid rgba(255,255,255,.08);
-      border-radius:12px;
+      border-radius:10px;
       background:rgba(255,255,255,.03);
       min-width:0;
     }
@@ -213,14 +212,20 @@ function screenHtml() {
       min-width:0;
       overflow:hidden;
       text-overflow:ellipsis;
-      white-space:nowrap;
-      font-weight:900;
+      /* ВАЖНО: перенос на 2 строки */
+      white-space:normal;
+      display:-webkit-box;
+      -webkit-line-clamp:2;
+      -webkit-box-orient:vertical;
+      line-height:1.1;
+      font-weight:950;
     }
     .qty{
       flex:0 0 auto;
       white-space:nowrap;
       color:rgba(255,255,255,.75);
       font-weight:1000;
+      margin-left:6px;
     }
 
     .placeholder{
@@ -228,7 +233,7 @@ function screenHtml() {
       display:flex;
       align-items:center;
       justify-content:center;
-      color:rgba(255,255,255,.38);
+      color:rgba(255,255,255,.35);
       font-weight:950;
       text-align:center;
       padding:10px;
@@ -242,6 +247,7 @@ function screenHtml() {
       color:rgba(255,255,255,.18);
       font-weight:1000;
       font-size:28px;
+      letter-spacing:.3px;
     }
   </style>
 </head>
@@ -250,24 +256,18 @@ function screenHtml() {
 
 <script>
   const grid = document.getElementById('grid');
-
-  const COLS = 5;
-  const ROWS = 2;
-  const TOTAL = COLS * ROWS;
+  const COLS = 5, ROWS = 2, TOTAL = 10;
 
   function fmt2(n){ return String(n).padStart(2,'0'); }
-
   function mmss(ms){
     const s = Math.max(0, Math.floor(ms/1000));
     const m = Math.floor(s/60);
     const ss = s%60;
     return m + ":" + fmt2(ss);
   }
-
   function esc(s){ return String(s||'').replace(/</g,'&lt;'); }
 
-  // Цвет таймера:
-  // 40–25 зелёный, 25–10 жёлтый, 10–0 красный
+  // Цвет таймера: 40–25 зелёный, 25–10 жёлтый, 10–0 красный
   function remainColor(remMin){
     if (remMin <= 0) return 'var(--ready)';
     if (remMin <= 10) return 'var(--red)';
@@ -275,38 +275,23 @@ function screenHtml() {
     return 'var(--green)';
   }
 
-  // Квадраты на весь экран
-  function layoutSquares(){
-    const gap = 10; // должен совпадать с --gap
-    const w = window.innerWidth - gap*2;
-    const h = window.innerHeight - gap*2;
-
-    const cellW = (w - gap * (COLS - 1)) / COLS;
-    const cellH = (h - gap * (ROWS - 1)) / ROWS;
-
-    const size = Math.floor(Math.min(cellW, cellH));
-    grid.style.setProperty('--cellSize', size + 'px');
-    grid.style.gridTemplateColumns = \`repeat(\${COLS}, \${size}px)\`;
-    grid.style.gridAutoRows = size + 'px';
-  }
-
-  // Подогнать текст по ширине
-  function fitTextWidth(el, maxPx, minPx){
+  // Подогнать текст по ширине И высоте контейнера (работает стабильнее)
+  function fitText(el, maxPx, minPx){
     if (!el) return;
     let size = maxPx;
     el.style.fontSize = size + 'px';
-    while (size > minPx && (el.scrollWidth > el.clientWidth)){
+    // маленький запас
+    while (size > minPx && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight)){
       size -= 1;
       el.style.fontSize = size + 'px';
     }
   }
 
-  // Подогнать размер шрифта внутри контейнера по высоте (чтобы все блюда влезли)
-  function fitItemsFont(container, maxPx, minPx){
+  // Уменьшить шрифт для списка блюд, пока ВСЁ не влезет
+  function fitItems(container, maxPx, minPx){
     if (!container) return;
     let size = maxPx;
     container.style.fontSize = size + 'px';
-    // line-height сделаем чуть плотнее
     container.style.lineHeight = "1.08";
     while (size > minPx && container.scrollHeight > container.clientHeight){
       size -= 1;
@@ -336,8 +321,8 @@ function screenHtml() {
       const timerText = (remMs <= 0) ? 'READY' : mmss(remMs);
 
       const items = Array.isArray(o.items) ? o.items : [];
-      let itemsHtml = '';
 
+      let itemsHtml = '';
       if (items.length){
         itemsHtml = items.map(it => {
           const name = esc(it.name);
@@ -359,16 +344,17 @@ function screenHtml() {
       grid.appendChild(cell);
     }
 
-    // Подгоняем шрифты после рендера
+    // Подгоняем шрифты
     grid.querySelectorAll('[data-fit="order"]').forEach(el => {
-      fitTextWidth(el, 34, 12);
+      // высота top маленькая, поэтому max делаем умеренным
+      fitText(el, 32, 10);
     });
     grid.querySelectorAll('[data-fit="remain"]').forEach(el => {
-      fitTextWidth(el, 30, 12);
+      fitText(el, 28, 10);
     });
     grid.querySelectorAll('[data-fit="items"]').forEach(box => {
-      // если много блюд — уменьшим шрифт, чтобы влезли
-      fitItemsFont(box, 18, 10);
+      // Это ключевое: чтобы "большие заказы" НЕ исчезали — уменьшаем шрифт пока не влезет
+      fitItems(box, 18, 8);
     });
   }
 
@@ -378,24 +364,17 @@ function screenHtml() {
       const j = await r.json();
       render(j);
     }catch(e){
-      // если сеть легла — просто не обновляем
+      // ignore
     }
   }
 
-  layoutSquares();
-  window.addEventListener('resize', () => {
-    layoutSquares();
-    tick();
-  });
-
   tick();
-  setInterval(tick, 1000); // обновляем каждую секунду (таймер)
+  setInterval(tick, 1000);
 </script>
 </body>
 </html>`;
 }
 
-// Главная и /screen — экран
 app.get("/", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
@@ -437,7 +416,7 @@ function getState(ctx) {
       prepMinutes: 25,
       cart: {},
       cat: null,
-      orderId: null, // заказ на экране (создаём сразу после ввода времени)
+      orderId: null, // создаём заказ сразу после ввода времени
     };
   }
   return ctx.session.state;
@@ -541,7 +520,6 @@ bot.hears(BTN_NEW, async (ctx) => {
   if (await deny(ctx)) return;
   const st = getState(ctx);
 
-  // если был незавершённый и уже создан на экране — удалим
   if (st.orderId) deleteKitchenOrder(st.orderId);
 
   st.step = "entering_order";
@@ -578,23 +556,18 @@ bot.on("text", async (ctx) => {
 
     st.prepMinutes = Math.floor(n);
 
-    // ✅ СРАЗУ создаём заказ на экране => таймер идёт, пока менеджер выбирает блюда
     if (!st.orderNo.trim()) {
       await ctx.reply("❌ Нет номера заказа. Нажми «Новый заказ».", mainKeyboard());
       st.step = "idle";
       return;
     }
 
+    // ✅ Запускаем таймер сразу
     const id = addKitchenOrder({ orderNo: st.orderNo.trim(), prepMinutes: st.prepMinutes });
     st.orderId = id;
 
     st.step = "selecting_items";
-
-    await ctx.reply(
-      `⏱ Таймер запущен на ТВ: ${PUBLIC_URL}/\nВыбери блюда и нажми «Отправить на ТВ».`,
-      mainKeyboard()
-    );
-
+    await ctx.reply(`⏱ Таймер уже идет на ТВ: ${PUBLIC_URL}/\nТеперь выбери блюда и нажми «Отправить на ТВ».`, mainKeyboard());
     await showCategories(ctx);
     return;
   }
@@ -641,8 +614,6 @@ bot.action("edit", async (ctx) => {
   if (await deny(ctx)) return;
 
   const st = getState(ctx);
-
-  // уже создали таймер на экране — удаляем (меняем номер/время)
   if (st.orderId) deleteKitchenOrder(st.orderId);
 
   st.step = "entering_order";
@@ -663,9 +634,7 @@ bot.action("remove_mode", async (ctx) => {
   const keys = Object.keys(st.cart);
   if (!keys.length) return ctx.reply("Корзина пустая.", mainKeyboard());
 
-  const rows = keys.map((k) => [
-    Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`)
-  ]);
+  const rows = keys.map((k) => [Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`)]);
   rows.push([Markup.button.callback("⬅️ Назад", st.cat ? "back_to_dishes" : "cats")]);
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
 });
@@ -696,16 +665,11 @@ bot.action("send", async (ctx) => {
   const st = getState(ctx);
   const items = Object.entries(st.cart).map(([name, qty]) => ({ name, qty }));
 
-  if (!st.orderId) {
-    return ctx.reply("❌ Сначала введи номер и время (таймер должен запуститься).", mainKeyboard());
-  }
+  if (!st.orderId) return ctx.reply("❌ Сначала введи номер и время.", mainKeyboard());
   if (!items.length) return ctx.reply("❌ Корзина пустая.", mainKeyboard());
 
-  // ✅ Добавляем блюда в уже созданный заказ (таймер не терял минуты)
   const ok = updateKitchenOrderItems(st.orderId, items);
-  if (!ok) {
-    return ctx.reply("❌ Заказ на экране не найден (возможно сервер перезапускался). Создай заказ заново.", mainKeyboard());
-  }
+  if (!ok) return ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
 
   await ctx.reply(`✅ Блюда появились на ТВ: ${PUBLIC_URL}/`, mainKeyboard());
 
@@ -736,14 +700,9 @@ app.post(WEBHOOK_PATH, async (req, res) => {
 // START
 // ==========================
 const PORT = process.env.PORT || 3000;
-
 http.createServer(app).listen(PORT, async () => {
   console.log("Listening on", PORT);
-
   const webhookUrl = `${PUBLIC_URL}${WEBHOOK_PATH}`;
   await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
   console.log("Webhook set to:", webhookUrl);
-
-  console.log("Screen:", `${PUBLIC_URL}/`);
-  console.log("API:", `${PUBLIC_URL}/api/orders`);
 });
