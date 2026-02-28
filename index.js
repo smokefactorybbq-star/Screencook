@@ -1,6 +1,6 @@
 // index.js (ESM)
-// Один деплой: бот -> этот же сервер -> экран ТВ.
-// Экран: /  (или /screen)
+// Один деплой: бот -> этот же сервер -> ТВ-экран.
+// Экран: /   (или /screen)
 // API: /api/orders
 // Webhook: /tg/<WEBHOOK_SECRET>
 
@@ -59,13 +59,11 @@ const MENU_BY_CAT = {
 // ==========================
 // ORDERS memory (up to 10)
 // ==========================
-// items могут быть пустыми сначала — таймер уже идёт, блюда добавятся позже.
 let orders = []; // [{ id, orderNo, prepMinutes, createdAt, endsAt, expiresAt, items:[{name,qty}] }]
 
 function pruneOrders() {
   const now = Date.now();
   orders = orders.filter((o) => o.expiresAt > now);
-  // новые сверху
   orders.sort((a, b) => b.createdAt - a.createdAt);
   orders = orders.slice(0, 10);
 }
@@ -82,7 +80,7 @@ function addKitchenOrder({ orderNo, prepMinutes }) {
     createdAt,
     endsAt,
     expiresAt,
-    items: [], // потом добавим
+    items: [],
   };
   orders.unshift(o);
   pruneOrders();
@@ -92,9 +90,7 @@ function addKitchenOrder({ orderNo, prepMinutes }) {
 function updateKitchenOrderItems(orderId, items) {
   const idx = orders.findIndex((o) => o.id === orderId);
   if (idx === -1) return false;
-
   orders[idx].items = Array.isArray(items) ? items : [];
-  // обновим сортировку/обрезку
   pruneOrders();
   return true;
 }
@@ -123,20 +119,22 @@ function screenHtml() {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Kitchen Screen</title>
+  <title>Screen</title>
   <style>
     :root{
-      --bg:#070b14;
-      --cell:#11182b;
+      --bg:#050813;
+      --cell:#0f1730;
       --border:rgba(255,255,255,.10);
       --text:#ffffff;
-      --muted:rgba(255,255,255,.55);
+      --muted:rgba(255,255,255,.65);
       --green:#00ff66;
       --yellow:#ffd400;
       --red:#ff3b30;
       --ready:#b0b7c6;
+      --gap:10px;
     }
-    *{box-sizing:border-box}
+    *{ box-sizing:border-box; }
+    html, body { height:100%; }
     body{
       margin:0;
       background:var(--bg);
@@ -145,53 +143,16 @@ function screenHtml() {
       overflow:hidden;
     }
 
-    header{
-      height:64px;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      padding:0 16px;
-      border-bottom:1px solid var(--border);
-      background:linear-gradient(180deg, rgba(7,11,20,.98), rgba(7,11,20,.85));
-      position:relative;
-      z-index:5;
-    }
-    .title{
-      font-weight:950;
-      letter-spacing:.2px;
-      font-size:20px;
-    }
-    .meta{
-      font-weight:800;
-      font-size:13px;
-      color:var(--muted);
-      display:flex;
-      gap:12px;
-      align-items:center;
-      white-space:nowrap;
-    }
-    .dot{
-      width:8px;height:8px;border-radius:999px;
-      background:var(--green);
-      box-shadow:0 0 14px rgba(0,255,102,.35);
-      display:inline-block;
-    }
-
-    main{
-      height: calc(100vh - 64px);
-      display:flex;
-      justify-content:center;
-      align-items:center;
-      padding:10px;
-    }
-
-    /* Сетка 10 квадратов: 5х2 */
+    /* Сетка на весь экран */
     .grid{
+      height:100vh;
+      width:100vw;
       display:grid;
-      gap:10px;
+      gap:var(--gap);
       justify-content:center;
       align-content:center;
-      /* колонки/ряды выставит JS через px, чтобы были квадраты */
+      padding:var(--gap);
+      /* размеры задаст JS, чтобы были квадраты */
     }
 
     .cell{
@@ -200,53 +161,39 @@ function screenHtml() {
       background:var(--cell);
       border:1px solid var(--border);
       border-radius:16px;
-      padding:10px;
+      overflow:hidden;
+      box-shadow:0 12px 30px rgba(0,0,0,.38);
       display:flex;
       flex-direction:column;
-      overflow:hidden;
-      box-shadow:0 12px 30px rgba(0,0,0,.35);
     }
 
+    /* Верхняя полоса 10%: номер слева, таймер справа */
     .top{
-      flex: 0 0 46%;
+      height:10%;
+      min-height:28px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      padding:6px 10px;
       display:flex;
-      flex-direction:column;
-      justify-content:center;
-      gap:6px;
-      min-height:0;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
     }
-
-    .orderNo{
+    .orderNo, .remain{
       font-weight:1000;
-      line-height:1.02;
-      text-align:center;
-      letter-spacing:.4px;
-      /* font-size подберём JS */
+      letter-spacing:.3px;
+      line-height:1;
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
     }
+    .orderNo{ flex: 1 1 auto; text-align:left; }
+    .remain{ flex: 0 0 auto; text-align:right; }
 
-    .remain{
-      font-weight:1000;
-      line-height:1.02;
-      text-align:center;
-      /* цвет/размер задаст JS */
-      white-space:nowrap;
+    /* Зона блюд 90% */
+    .itemsWrap{
+      flex:1 1 auto;
+      padding:8px 8px 10px;
       overflow:hidden;
-      text-overflow:ellipsis;
-    }
-
-    .items{
-      flex: 1 1 auto;
-      margin-top:6px;
-      border-top:1px solid rgba(255,255,255,.08);
-      padding-top:8px;
-      overflow:hidden;
-      color:rgba(255,255,255,.92);
-      font-weight:850;
-      font-size:14px;
-      line-height:1.15;
       display:flex;
       flex-direction:column;
       gap:6px;
@@ -262,17 +209,18 @@ function screenHtml() {
       background:rgba(255,255,255,.03);
       min-width:0;
     }
-    .item .name{
+    .name{
       min-width:0;
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
+      font-weight:900;
     }
-    .item .qty{
+    .qty{
       flex:0 0 auto;
-      color:rgba(255,255,255,.75);
-      font-weight:950;
       white-space:nowrap;
+      color:rgba(255,255,255,.75);
+      font-weight:1000;
     }
 
     .placeholder{
@@ -280,43 +228,28 @@ function screenHtml() {
       display:flex;
       align-items:center;
       justify-content:center;
-      color:rgba(255,255,255,.45);
-      font-weight:900;
-      font-size:14px;
+      color:rgba(255,255,255,.38);
+      font-weight:950;
       text-align:center;
-      padding:8px;
+      padding:10px;
     }
 
     .emptyCell{
+      height:100%;
       display:flex;
       align-items:center;
       justify-content:center;
-      color:rgba(255,255,255,.25);
-      font-weight:950;
-      font-size:22px;
-      letter-spacing:.3px;
+      color:rgba(255,255,255,.18);
+      font-weight:1000;
+      font-size:28px;
     }
   </style>
 </head>
 <body>
-  <header>
-    <div class="title">Smoke Factory — Kitchen Screen</div>
-    <div class="meta">
-      <span class="dot" id="dot"></span>
-      <span id="status">онлайн</span>
-      <span id="updated">—</span>
-    </div>
-  </header>
-
-  <main>
-    <div class="grid" id="grid"></div>
-  </main>
+  <div class="grid" id="grid"></div>
 
 <script>
   const grid = document.getElementById('grid');
-  const updated = document.getElementById('updated');
-  const statusEl = document.getElementById('status');
-  const dot = document.getElementById('dot');
 
   const COLS = 5;
   const ROWS = 2;
@@ -333,57 +266,61 @@ function screenHtml() {
 
   function esc(s){ return String(s||'').replace(/</g,'&lt;'); }
 
-  // Цвет "ОСТАЛОСЬ" по интервалам:
+  // Цвет таймера:
   // 40–25 зелёный, 25–10 жёлтый, 10–0 красный
   function remainColor(remMin){
     if (remMin <= 0) return 'var(--ready)';
     if (remMin <= 10) return 'var(--red)';
     if (remMin <= 25) return 'var(--yellow)';
-    // 25..40 и выше -> зелёный (если вдруг >40 — тоже зелёный)
     return 'var(--green)';
   }
 
-  // Сделать 10 одинаковых квадратов, чтобы точно помещались в экран
+  // Квадраты на весь экран
   function layoutSquares(){
-    const headerH = 64;
-    const gap = 10;
-    const pad = 10 * 2; // main padding left+right approx
-    const w = window.innerWidth - 20; // main padding
-    const h = window.innerHeight - headerH - 20;
+    const gap = 10; // должен совпадать с --gap
+    const w = window.innerWidth - gap*2;
+    const h = window.innerHeight - gap*2;
 
     const cellW = (w - gap * (COLS - 1)) / COLS;
     const cellH = (h - gap * (ROWS - 1)) / ROWS;
 
     const size = Math.floor(Math.min(cellW, cellH));
-
     grid.style.setProperty('--cellSize', size + 'px');
     grid.style.gridTemplateColumns = \`repeat(\${COLS}, \${size}px)\`;
     grid.style.gridAutoRows = size + 'px';
-    grid.style.gap = gap + 'px';
   }
 
-  // Автоподбор шрифта, чтобы текст влезал
-  function fitText(el, maxPx, minPx){
+  // Подогнать текст по ширине
+  function fitTextWidth(el, maxPx, minPx){
     if (!el) return;
     let size = maxPx;
     el.style.fontSize = size + 'px';
-
-    // Подгоняем пока не влезет по ширине
-    while (size > minPx && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight)){
+    while (size > minPx && (el.scrollWidth > el.clientWidth)){
       size -= 1;
       el.style.fontSize = size + 'px';
     }
   }
 
-  function render(orders){
-    grid.innerHTML = '';
+  // Подогнать размер шрифта внутри контейнера по высоте (чтобы все блюда влезли)
+  function fitItemsFont(container, maxPx, minPx){
+    if (!container) return;
+    let size = maxPx;
+    container.style.fontSize = size + 'px';
+    // line-height сделаем чуть плотнее
+    container.style.lineHeight = "1.08";
+    while (size > minPx && container.scrollHeight > container.clientHeight){
+      size -= 1;
+      container.style.fontSize = size + 'px';
+    }
+  }
 
+  function render(orders){
+    grid.innerHTML = "";
     const now = Date.now();
     const list = Array.isArray(orders) ? orders.slice(0, 10) : [];
 
-    for (let i = 0; i < TOTAL; i++){
+    for (let i=0; i<TOTAL; i++){
       const o = list[i];
-
       const cell = document.createElement('div');
       cell.className = 'cell';
 
@@ -394,37 +331,45 @@ function screenHtml() {
       }
 
       const remMs = (o.endsAt || 0) - now;
-      const remText = (remMs <= 0) ? 'READY' : ('ОСТАЛОСЬ ' + mmss(remMs));
       const remMin = remMs / 60000;
       const color = remainColor(remMin);
+      const timerText = (remMs <= 0) ? 'READY' : mmss(remMs);
 
       const items = Array.isArray(o.items) ? o.items : [];
+      let itemsHtml = '';
 
-      const itemsHtml = items.length
-        ? '<div class="items">' + items.map(it => {
-            const name = esc(it.name);
-            const qty = Number(it.qty || 0);
-            return \`<div class="item"><div class="name">\${name}</div><div class="qty">x\${qty}</div></div>\`;
-          }).join('') + '</div>'
-        : '<div class="placeholder">Выбор блюд…</div>';
+      if (items.length){
+        itemsHtml = items.map(it => {
+          const name = esc(it.name);
+          const qty = Number(it.qty || 0);
+          return \`<div class="item"><div class="name">\${name}</div><div class="qty">x\${qty}</div></div>\`;
+        }).join('');
+      } else {
+        itemsHtml = '<div class="placeholder">Выбор блюд…</div>';
+      }
 
       cell.innerHTML = \`
         <div class="top">
           <div class="orderNo" data-fit="order">\${esc(o.orderNo || '—')}</div>
-          <div class="remain" data-fit="remain" style="color:\${color}">\${remText}</div>
+          <div class="remain" data-fit="remain" style="color:\${color}">\${timerText}</div>
         </div>
-        \${itemsHtml}
+        <div class="itemsWrap" data-fit="items">\${itemsHtml}</div>
       \`;
 
       grid.appendChild(cell);
     }
 
-    // После рендера — подгон шрифтов
-    const orderEls = grid.querySelectorAll('[data-fit="order"]');
-    const remEls = grid.querySelectorAll('[data-fit="remain"]');
-
-    orderEls.forEach(el => fitText(el, 46, 14));
-    remEls.forEach(el => fitText(el, 34, 12));
+    // Подгоняем шрифты после рендера
+    grid.querySelectorAll('[data-fit="order"]').forEach(el => {
+      fitTextWidth(el, 34, 12);
+    });
+    grid.querySelectorAll('[data-fit="remain"]').forEach(el => {
+      fitTextWidth(el, 30, 12);
+    });
+    grid.querySelectorAll('[data-fit="items"]').forEach(box => {
+      // если много блюд — уменьшим шрифт, чтобы влезли
+      fitItemsFont(box, 18, 10);
+    });
   }
 
   async function tick(){
@@ -432,17 +377,8 @@ function screenHtml() {
       const r = await fetch('/api/orders', { cache:'no-store' });
       const j = await r.json();
       render(j);
-
-      const d = new Date();
-      updated.textContent = "обновлено " + fmt2(d.getHours()) + ":" + fmt2(d.getMinutes()) + ":" + fmt2(d.getSeconds());
-
-      statusEl.textContent = "онлайн";
-      dot.style.background = "var(--green)";
-      dot.style.boxShadow = "0 0 14px rgba(0,255,102,.35)";
     }catch(e){
-      statusEl.textContent = "ошибка";
-      dot.style.background = "var(--yellow)";
-      dot.style.boxShadow = "0 0 14px rgba(255,212,0,.25)";
+      // если сеть легла — просто не обновляем
     }
   }
 
@@ -453,19 +389,17 @@ function screenHtml() {
   });
 
   tick();
-  setInterval(tick, 1000); // таймер лучше каждую секунду
+  setInterval(tick, 1000); // обновляем каждую секунду (таймер)
 </script>
 </body>
 </html>`;
 }
 
-// Главная сразу экран
+// Главная и /screen — экран
 app.get("/", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
 });
-
-// алиас
 app.get("/screen", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
@@ -501,9 +435,9 @@ function getState(ctx) {
       step: "idle", // idle | entering_order | entering_time | selecting_items
       orderNo: "",
       prepMinutes: 25,
-      cart: {},      // { name: qty }
+      cart: {},
       cat: null,
-      orderId: null, // id заказа на экране (создаётся сразу после ввода времени)
+      orderId: null, // заказ на экране (создаём сразу после ввода времени)
     };
   }
   return ctx.session.state;
@@ -607,7 +541,7 @@ bot.hears(BTN_NEW, async (ctx) => {
   if (await deny(ctx)) return;
   const st = getState(ctx);
 
-  // если предыдущий незавершённый заказ уже создали на экране — удалим, чтобы не засорять
+  // если был незавершённый и уже создан на экране — удалим
   if (st.orderId) deleteKitchenOrder(st.orderId);
 
   st.step = "entering_order";
@@ -627,7 +561,6 @@ bot.on("text", async (ctx) => {
   if (txt === BTN_NEW) return;
 
   if (st.step === "entering_order") {
-    // если был старый незавершённый — удалим
     if (st.orderId) deleteKitchenOrder(st.orderId);
 
     st.orderNo = txt;
@@ -645,20 +578,23 @@ bot.on("text", async (ctx) => {
 
     st.prepMinutes = Math.floor(n);
 
-    // ✅ ВАЖНОЕ: СРАЗУ создаём заказ на экране, чтобы таймер пошёл немедленно
+    // ✅ СРАЗУ создаём заказ на экране => таймер идёт, пока менеджер выбирает блюда
     if (!st.orderNo.trim()) {
       await ctx.reply("❌ Нет номера заказа. Нажми «Новый заказ».", mainKeyboard());
       st.step = "idle";
       return;
     }
+
     const id = addKitchenOrder({ orderNo: st.orderNo.trim(), prepMinutes: st.prepMinutes });
     st.orderId = id;
 
     st.step = "selecting_items";
+
     await ctx.reply(
-      `⏱ Таймер запущен на экране: ${PUBLIC_URL}/\nТеперь выбери блюда и нажми «Отправить на ТВ».`,
+      `⏱ Таймер запущен на ТВ: ${PUBLIC_URL}/\nВыбери блюда и нажми «Отправить на ТВ».`,
       mainKeyboard()
     );
+
     await showCategories(ctx);
     return;
   }
@@ -706,7 +642,7 @@ bot.action("edit", async (ctx) => {
 
   const st = getState(ctx);
 
-  // если уже создали заказ на экране — удалим, потому что номер/время меняем
+  // уже создали таймер на экране — удаляем (меняем номер/время)
   if (st.orderId) deleteKitchenOrder(st.orderId);
 
   st.step = "entering_order";
@@ -765,16 +701,13 @@ bot.action("send", async (ctx) => {
   }
   if (!items.length) return ctx.reply("❌ Корзина пустая.", mainKeyboard());
 
-  // ✅ Теперь просто ДОБАВЛЯЕМ блюда в уже созданный заказ (таймер не терял минуты)
+  // ✅ Добавляем блюда в уже созданный заказ (таймер не терял минуты)
   const ok = updateKitchenOrderItems(st.orderId, items);
   if (!ok) {
-    return ctx.reply("❌ Заказ на экране не найден (возможно перезапуск сервера). Создай заказ заново.", mainKeyboard());
+    return ctx.reply("❌ Заказ на экране не найден (возможно сервер перезапускался). Создай заказ заново.", mainKeyboard());
   }
 
-  await ctx.reply(
-    `✅ Блюда отправлены на ТВ\nЭкран: ${PUBLIC_URL}/`,
-    mainKeyboard()
-  );
+  await ctx.reply(`✅ Блюда появились на ТВ: ${PUBLIC_URL}/`, mainKeyboard());
 
   // reset
   st.step = "idle";
