@@ -1,6 +1,6 @@
-// index.js (ESM) — KITCHEN PRO (TV FIX + DEBUG)
-// ТВ-экран: / (или /screen)
-// API: /api/orders
+// index.js — TV SAFE (old WebView compatible)
+// Screen:  /   (or /screen)
+// API:     /api/orders   (JSON)
 // Webhook: /tg/<WEBHOOK_SECRET>
 
 import express from "express";
@@ -37,7 +37,7 @@ const BTN_REMOVE_MODE = "➖ Убрать позицию";
 const BTN_BACK_CATS = "⬅️ Категории";
 
 // ==========================
-// MENU by categories — замени под себя
+// MENU
 // ==========================
 const CATEGORIES = [
   { key: "soups", label: "🍲 Супы" },
@@ -56,9 +56,9 @@ const MENU_BY_CAT = {
 };
 
 // ==========================
-// ORDERS memory (up to 10)
+// ORDERS memory
 // ==========================
-let orders = [];
+let orders = []; // [{ id, orderNo, prepMinutes, createdAt, endsAt, expiresAt, items:[{name,qty}] }]
 
 function pruneOrders() {
   const now = Date.now();
@@ -67,18 +67,18 @@ function pruneOrders() {
   orders = orders.slice(0, 10);
 }
 
-function addKitchenOrder({ orderNo, prepMinutes }) {
+function addKitchenOrder(orderNo, prepMinutes) {
   const createdAt = Date.now();
   const endsAt = createdAt + prepMinutes * 60_000;
   const expiresAt = endsAt + 5 * 60_000;
 
   const o = {
     id: crypto.randomUUID(),
-    orderNo,
-    prepMinutes,
-    createdAt,
-    endsAt,
-    expiresAt,
+    orderNo: orderNo,
+    prepMinutes: prepMinutes,
+    createdAt: createdAt,
+    endsAt: endsAt,
+    expiresAt: expiresAt,
     items: [],
   };
   orders.unshift(o);
@@ -112,25 +112,21 @@ app.get("/api/orders", (_req, res) => {
   res.json(orders);
 });
 
-// (для диагностики на ТВ)
-app.get("/health", (_req, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  pruneOrders();
-  res.json({ ok: true, orders: orders.length, time: Date.now() });
-});
-
+// ==========================
+// SCREEN HTML (TV SAFE)
+// ==========================
 function screenHtml() {
   return `<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Kitchen PRO</title>
+  <title>Screen</title>
   <style>
     :root{
       --bg:#050813;
       --cell:#0f1730;
-      --border:rgba(255,255,255,.10);
+      --border:rgba(255,255,255,.12);
       --text:#ffffff;
 
       --green:#00ff66;
@@ -138,42 +134,44 @@ function screenHtml() {
       --red:#ff3b30;
       --ready:#aab2c2;
 
-      --gap: 10px;
-      --cols: 5;
-      --rows: 4;
-
+      /* anti-overscan */
       --safe: 40px;
+
+      --gap: 10px;
     }
     *{ box-sizing:border-box; }
-    html, body { height:100%; width:100%; }
+    html,body{ width:100%; height:100%; margin:0; }
     body{
-      margin:0;
       background:var(--bg);
       color:var(--text);
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
       overflow:hidden;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
     }
 
-    /* ✅ ВАЖНО: stage гарантированно имеет высоту/ширину на ТВ */
+    /* фиксированный контейнер — работает на ТВ стабильнее, чем 100% + padding */
     .stage{
       position:fixed;
-      left: var(--safe);
-      right: var(--safe);
-      top: var(--safe);
-      bottom: var(--safe);
+      left:var(--safe);
+      right:var(--safe);
+      top:var(--safe);
+      bottom:var(--safe);
       overflow:hidden;
     }
 
-    .grid{
-      width: 100%;
-      height: 100%;
-      display:grid;
-      grid-template-columns: repeat(var(--cols), 1fr);
-      grid-template-rows: repeat(var(--rows), 1fr);
-      gap: var(--gap);
+    /* 10 карточек: 5 в ряд, 2 ряда (flex wrap) */
+    .wrap{
+      width:100%;
+      height:100%;
+      display:flex;
+      flex-wrap:wrap;
+      align-content:stretch;
+      justify-content:space-between;
     }
 
     .card{
+      width: calc((100% - (var(--gap) * 4)) / 5);
+      height: calc((100% - var(--gap)) / 2);
+      margin-bottom: var(--gap);
       background:var(--cell);
       border:1px solid var(--border);
       border-radius:18px;
@@ -183,399 +181,261 @@ function screenHtml() {
       min-width:0;
       min-height:0;
       box-shadow:0 12px 30px rgba(0,0,0,.35);
-      position:relative;
+    }
+    .card:nth-child(n+6){
+      margin-bottom: 0;
     }
 
     .top{
-      flex: 0 0 auto;
-      padding: .95em 1.1em .6em;
+      flex:0 0 auto;
+      padding: 14px 16px 10px;
       border-bottom:1px solid rgba(255,255,255,.10);
       display:flex;
       align-items:flex-end;
       justify-content:space-between;
-      gap: 1em;
+      gap: 10px;
       min-height:0;
     }
-    .orderNo, .remain{
+    .orderNo,.remain{
       font-weight:1000;
-      letter-spacing:.3px;
       line-height:1;
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
       min-width:0;
     }
-    .orderNo{ flex: 1 1 auto; text-align:left; }
-    .remain{ flex: 0 0 auto; text-align:right; }
+    .orderNo{ flex:1 1 auto; }
+    .remain{ flex:0 0 auto; }
 
     .items{
-      flex: 1 1 auto;
-      padding: 1em 1.1em 1.1em;
+      flex:1 1 auto;
+      padding: 12px 14px 14px;
       overflow:hidden;
+      min-height:0;
       display:flex;
       flex-direction:column;
-      gap: .45em;
-      min-height:0;
+      gap: 8px;
     }
 
     .item{
       display:flex;
       align-items:center;
-      gap: .6em;
-      padding: .55em .75em;
-      border:1px solid rgba(255,255,255,.09);
-      border-radius: .9em;
-      background:rgba(255,255,255,.03);
+      gap: 10px;
+      padding: 10px 12px;
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:16px;
+      background: rgba(255,255,255,.03);
       min-width:0;
     }
     .name{
-      flex: 1 1 auto;
+      flex:1 1 auto;
       min-width:0;
       font-weight:950;
       line-height:1.12;
       white-space:normal;
       word-break:break-word;
+      overflow:hidden;
       display:-webkit-box;
       -webkit-line-clamp:2;
       -webkit-box-orient:vertical;
-      overflow:hidden;
     }
     .qty{
       flex:0 0 auto;
-      white-space:nowrap;
-      color:rgba(255,255,255,.75);
       font-weight:1000;
+      color: rgba(255,255,255,.75);
+      white-space:nowrap;
     }
 
     .placeholder{
-      height:100%;
+      flex:1 1 auto;
       display:flex;
       align-items:center;
       justify-content:center;
-      color:rgba(255,255,255,.35);
-      font-weight:950;
-      text-align:center;
-      padding: 1em;
-      font-size: 28px;
-    }
-
-    /* ERROR overlay */
-    .error{
-      height:100%;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      color:#fff;
+      color:rgba(255,255,255,.28);
       font-weight:1000;
-      text-align:center;
-      padding: 1em;
-      font-size: 22px;
-      background: rgba(255,0,0,.12);
-      border: 2px solid rgba(255,0,0,.35);
-      border-radius: 18px;
-      white-space: pre-wrap;
     }
 
     .blink{
-      animation: blink 0.9s steps(2, end) infinite;
+      animation: blink 0.9s steps(2,end) infinite;
     }
     @keyframes blink{
-      0%{ filter: brightness(1); }
-      50%{ filter: brightness(1.6); }
-      100%{ filter: brightness(1); }
+      0%{ filter:brightness(1); }
+      50%{ filter:brightness(1.6); }
+      100%{ filter:brightness(1); }
     }
 
-    /* Панель управления */
-    .panel{
-      position:fixed;
-      right: 10px;
-      bottom: 10px;
-      display:flex;
-      gap:8px;
-      z-index:9999;
-      opacity:.82;
-      user-select:none;
-    }
-    .btn{
-      font-size:14px;
-      font-weight:900;
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid rgba(255,255,255,.15);
-      background: rgba(15,23,48,.78);
-      color:#fff;
-      cursor:pointer;
-    }
-
+    /* маленький debug внизу слева */
     .dbg{
       position:fixed;
-      left: 10px;
-      bottom: 10px;
-      z-index:9999;
+      left:10px;
+      bottom:10px;
       font-size:12px;
       font-weight:900;
-      color:rgba(255,255,255,.70);
+      color:rgba(255,255,255,.65);
       background: rgba(0,0,0,.25);
-      border: 1px solid rgba(255,255,255,.12);
-      padding: 8px 10px;
-      border-radius: 12px;
-      max-width: 55vw;
-      white-space: pre-wrap;
+      border:1px solid rgba(255,255,255,.12);
+      padding:8px 10px;
+      border-radius:12px;
+      z-index:9999;
+      white-space:pre-wrap;
     }
   </style>
 </head>
 <body>
   <div class="stage">
-    <div class="grid" id="grid"></div>
+    <div class="wrap" id="wrap"></div>
   </div>
-
-  <div class="panel">
-    <button class="btn" id="safeMinus">SAFE-</button>
-    <button class="btn" id="safePlus">SAFE+</button>
-    <button class="btn" id="soundBtn">SOUND</button>
-    <button class="btn" id="reloadBtn">RELOAD</button>
-  </div>
-  <div class="dbg" id="dbg">BOOT…</div>
+  <div class="dbg" id="dbg">BOOT</div>
 
 <script>
-  const grid = document.getElementById('grid');
-  const dbg = document.getElementById('dbg');
+(function(){
+  var wrap = document.getElementById('wrap');
+  var dbg = document.getElementById('dbg');
+  var TOTAL = 10;
 
-  const COLS = 5;
-  const ROWS = 4;
-  const MAX_ORDERS = 10;
-
-  // settings persist
-  const LS_SAFE = 'kitchen_safe';
-  const LS_SOUND = 'kitchen_sound';
-
-  let soundEnabled = (localStorage.getItem(LS_SOUND) ?? 'on') === 'on';
-
-  function getSafe(){
-    const v = Number(localStorage.getItem(LS_SAFE));
-    return Number.isFinite(v) ? v : 40;
+  function esc(s){
+    s = String(s || "");
+    return s.replace(/</g,"&lt;");
   }
-  function setSafe(v){
-    localStorage.setItem(LS_SAFE, String(v));
-    document.documentElement.style.setProperty('--safe', v + 'px');
-    dbg.textContent = dbg.textContent.replace(/SAFE:\\s*\\d+px/g, 'SAFE: ' + v + 'px');
+  function pad2(n){
+    n = String(n);
+    return (n.length<2) ? ("0"+n) : n;
   }
-  function setSound(on){
-    soundEnabled = !!on;
-    localStorage.setItem(LS_SOUND, soundEnabled ? 'on' : 'off');
-  }
-
-  // apply stored
-  setSafe(getSafe());
-  setSound(soundEnabled);
-
-  document.getElementById('safePlus').onclick = () => setSafe(Math.min(140, getSafe() + 5));
-  document.getElementById('safeMinus').onclick = () => setSafe(Math.max(0, getSafe() - 5));
-  document.getElementById('soundBtn').onclick = async () => {
-    setSound(!soundEnabled);
-    if (soundEnabled) { try { await beep(0.02, 880); } catch{} }
-  };
-  document.getElementById('reloadBtn').onclick = () => location.reload();
-
-  function fmt2(n){ return String(n).padStart(2,'0'); }
   function mmss(ms){
-    const s = Math.max(0, Math.floor(ms/1000));
-    const m = Math.floor(s/60);
-    const ss = s%60;
-    return m + ":" + fmt2(ss);
+    var s = Math.max(0, Math.floor(ms/1000));
+    var m = Math.floor(s/60);
+    var ss = s % 60;
+    return String(m) + ":" + pad2(ss);
   }
-  function esc(s){ return String(s||'').replace(/</g,'&lt;'); }
-
   function remainColor(remMin){
-    if (remMin <= 0) return 'var(--ready)';
-    if (remMin <= 10) return 'var(--red)';
-    if (remMin <= 25) return 'var(--yellow)';
-    return 'var(--green)';
-  }
-
-  // WebAudio beep
-  let audioCtx = null;
-  async function beep(duration=0.08, freq=880){
-    if (!soundEnabled) return;
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') await audioCtx.resume();
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    o.type = 'square';
-    o.frequency.value = freq;
-    g.gain.value = 0.02;
-    o.connect(g); g.connect(audioCtx.destination);
-    o.start();
-    o.stop(audioCtx.currentTime + duration);
+    if (remMin <= 0) return "var(--ready)";
+    if (remMin <= 10) return "var(--red)";
+    if (remMin <= 25) return "var(--yellow)";
+    return "var(--green)";
   }
 
   function fitText(el, maxPx, minPx){
     if (!el) return;
-    let size = maxPx;
-    el.style.fontSize = size + 'px';
+    var size = maxPx;
+    el.style.fontSize = size + "px";
     while (size > minPx && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight)){
       size -= 1;
-      el.style.fontSize = size + 'px';
+      el.style.fontSize = size + "px";
     }
   }
-  function fitItems(container, maxPx, minPx){
-    if (!container) return;
-    let size = maxPx;
-    container.style.fontSize = size + 'px';
-    container.style.lineHeight = "1.10";
-    while (size > minPx && container.scrollHeight > container.clientHeight){
+
+  function fitItems(box, maxPx, minPx){
+    if (!box) return;
+    var size = maxPx;
+    box.style.fontSize = size + "px";
+    box.style.lineHeight = "1.10";
+    while (size > minPx && box.scrollHeight > box.clientHeight){
       size -= 1;
-      container.style.fontSize = size + 'px';
+      box.style.fontSize = size + "px";
     }
   }
 
-  function spanFor(itemsCount){
-    if (itemsCount >= 12) return 3;
-    if (itemsCount >= 6) return 2;
-    return 1;
-  }
+  function makeCard(o, now){
+    var card = document.createElement("div");
+    card.className = "card";
 
-  function placeCards(cards){
-    const occ = Array.from({length: ROWS}, () => Array(COLS).fill(false));
-    const placed = [];
+    if (!o){
+      card.innerHTML = '<div class="placeholder">—</div>';
+      return card;
+    }
 
-    function canPlace(r, c, span){
-      if (r + span > ROWS) return false;
-      for (let rr = r; rr < r + span; rr++){
-        if (occ[rr][c]) return false;
+    var remMs = (o.endsAt || 0) - now;
+    var remMin = remMs / 60000;
+    var color = remainColor(remMin);
+    var timerText = (remMs <= 0) ? "READY" : mmss(remMs);
+
+    if (remMs > 0 && remMs <= 5*60*1000) card.className = "card blink";
+
+    var items = (o.items && o.items.length) ? o.items : null;
+
+    var itemsHtml = "";
+    if (items){
+      for (var i=0;i<items.length;i++){
+        var it = items[i] || {};
+        var name = esc(it.name);
+        var qty = Number(it.qty || 0);
+        itemsHtml += '<div class="item"><div class="name">'+name+'</div><div class="qty">x'+qty+'</div></div>';
       }
-      return true;
-    }
-    function doPlace(r, c, span, card){
-      for (let rr = r; rr < r + span; rr++) occ[rr][c] = true;
-      placed.push({ ...card, r, c, span });
+    } else {
+      itemsHtml = '<div class="placeholder">Выбор блюд…</div>';
     }
 
-    for (const card of cards){
-      for (let trySpan = card.span; trySpan >= 1; trySpan--){
-        let done = false;
-        for (let r=0; r<ROWS; r++){
-          for (let c=0; c<COLS; c++){
-            if (canPlace(r,c,trySpan)){
-              doPlace(r,c,trySpan, card);
-              done = true;
-              break;
-            }
-          }
-          if (done) break;
-        }
-        if (done) break;
-      }
-    }
-    return placed;
+    card.innerHTML =
+      '<div class="top">'+
+        '<div class="orderNo" data-fit="order">'+esc(o.orderNo || "—")+'</div>'+
+        '<div class="remain" data-fit="remain" style="color:'+color+'">'+timerText+'</div>'+
+      '</div>'+
+      '<div class="items" data-fit="items">'+itemsHtml+'</div>';
+
+    return card;
   }
-
-  const readyBeeped = new Set();
 
   function render(list){
-    grid.innerHTML = "";
-
-    if (!Array.isArray(list) || list.length === 0){
-      const box = document.createElement('div');
-      box.className = 'placeholder';
-      box.textContent = 'Нет заказов';
-      grid.appendChild(box);
-      return;
+    wrap.innerHTML = "";
+    var now = Date.now();
+    for (var i=0;i<TOTAL;i++){
+      var o = (list && list[i]) ? list[i] : null;
+      wrap.appendChild(makeCard(o, now));
     }
 
-    const now = Date.now();
-    const cards = list.slice(0, MAX_ORDERS).map(o => {
-      const items = Array.isArray(o.items) ? o.items : [];
-      return { o, span: spanFor(items.length) };
-    });
+    // подгон шрифтов после отрисовки
+    setTimeout(function(){
+      var orders = wrap.querySelectorAll('[data-fit="order"]');
+      for (var i=0;i<orders.length;i++) fitText(orders[i], 36, 10);
 
-    const placed = placeCards(cards);
+      var remains = wrap.querySelectorAll('[data-fit="remain"]');
+      for (var j=0;j<remains.length;j++) fitText(remains[j], 34, 10);
 
-    for (const p of placed){
-      const o = p.o;
-      const remMs = (o.endsAt || 0) - now;
-      const remMin = remMs / 60000;
-      const color = remainColor(remMin);
-      const timerText = (remMs <= 0) ? 'READY' : mmss(remMs);
-
-      const items = Array.isArray(o.items) ? o.items : [];
-
-      let itemsHtml = '';
-      if (items.length){
-        itemsHtml = items.map(it => {
-          const name = esc(it.name);
-          const qty = Number(it.qty || 0);
-          return \`<div class="item"><div class="name">\${name}</div><div class="qty">x\${qty}</div></div>\`;
-        }).join('');
-      } else {
-        itemsHtml = '<div class="placeholder" style="font-size:18px">Выбор блюд…</div>';
-      }
-
-      const card = document.createElement('div');
-      card.className = 'card';
-      if (remMs > 0 && remMs <= 5*60*1000) card.classList.add('blink');
-
-      card.style.gridColumn = (p.c + 1) + ' / span 1';
-      card.style.gridRow = (p.r + 1) + ' / span ' + p.span;
-
-      card.innerHTML = \`
-        <div class="top">
-          <div class="orderNo" data-fit="order">\${esc(o.orderNo || '—')}</div>
-          <div class="remain" data-fit="remain" style="color:\${color}">\${timerText}</div>
-        </div>
-        <div class="items" data-fit="items">\${itemsHtml}</div>
-      \`;
-
-      grid.appendChild(card);
-
-      if (remMs <= 0 && !readyBeeped.has(o.id)){
-        readyBeeped.add(o.id);
-        beep(0.07, 880);
-        setTimeout(() => beep(0.07, 660), 120);
-      }
-    }
-
-    requestAnimationFrame(() => {
-      grid.querySelectorAll('[data-fit="order"]').forEach(el => fitText(el, 40, 11));
-      grid.querySelectorAll('[data-fit="remain"]').forEach(el => fitText(el, 36, 11));
-      grid.querySelectorAll('[data-fit="items"]').forEach(box => fitItems(box, 24, 8));
-    });
+      var boxes = wrap.querySelectorAll('[data-fit="items"]');
+      for (var k=0;k<boxes.length;k++) fitItems(boxes[k], 22, 8);
+    }, 0);
   }
 
-  function showError(msg){
-    grid.innerHTML = "";
-    const e = document.createElement('div');
-    e.className = 'error';
-    e.textContent = msg;
-    grid.appendChild(e);
-  }
-
-  async function tick(){
+  function xhrJson(url, cb){
     try{
-      const r = await fetch('/api/orders', { cache:'no-store' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const j = await r.json();
-
-      dbg.textContent =
-        'API: OK\\n' +
-        'ORDERS: ' + (Array.isArray(j) ? j.length : '?') + '\\n' +
-        'SAFE: ' + getSafe() + 'px\\n' +
-        'SOUND: ' + (soundEnabled ? 'ON' : 'OFF');
-
-      render(j);
-    } catch (e){
-      dbg.textContent =
-        'API: ERROR\\n' +
-        String(e && e.message ? e.message : e) + '\\n' +
-        'SAFE: ' + getSafe() + 'px\\n' +
-        'Tip: open /api/orders';
-      showError('ОШИБКА ЗАГРУЗКИ /api/orders\\n\\n' + (e && e.message ? e.message : String(e)));
+      var x = new XMLHttpRequest();
+      x.open("GET", url, true);
+      x.onreadystatechange = function(){
+        if (x.readyState === 4){
+          if (x.status >= 200 && x.status < 300){
+            try{
+              var data = JSON.parse(x.responseText);
+              cb(null, data);
+            }catch(e){
+              cb(new Error("JSON parse error"));
+            }
+          } else {
+            cb(new Error("HTTP "+x.status));
+          }
+        }
+      };
+      x.send(null);
+    }catch(e){
+      cb(e);
     }
+  }
+
+  function tick(){
+    xhrJson("/api/orders", function(err, data){
+      if (err){
+        dbg.textContent = "API ERROR\\n" + String(err.message || err);
+        // покажем пустые
+        render([]);
+        return;
+      }
+      dbg.textContent = "API OK\\nORDERS: " + (data && data.length ? data.length : 0);
+      render(data || []);
+    });
   }
 
   tick();
   setInterval(tick, 1000);
-  window.addEventListener('resize', () => tick());
+})();
 </script>
 </body>
 </html>`;
@@ -603,7 +463,7 @@ bot.use((ctx, next) => {
 
 function isAllowed(ctx) {
   if (!MANAGER_IDS.length) return true;
-  const id = ctx.from?.id;
+  const id = ctx.from && ctx.from.id;
   return !!id && MANAGER_IDS.includes(id);
 }
 async function deny(ctx) {
@@ -767,12 +627,11 @@ bot.on("text", async (ctx) => {
       return;
     }
 
-    // ✅ таймер стартует сразу
-    const id = addKitchenOrder({ orderNo: st.orderNo.trim(), prepMinutes: st.prepMinutes });
-    st.orderId = id;
+    // ✅ стартуем таймер сразу (пока выбирают блюда)
+    st.orderId = addKitchenOrder(st.orderNo.trim(), st.prepMinutes);
 
     st.step = "selecting_items";
-    await ctx.reply(`⏱ Таймер уже идет на ТВ: ${PUBLIC_URL}/\nВыбери блюда и нажми «Отправить на ТВ».`, mainKeyboard());
+    await ctx.reply(`⏱ Таймер уже идет на ТВ: ${PUBLIC_URL}/screen`, mainKeyboard());
     await showCategories(ctx);
     return;
   }
@@ -780,7 +639,7 @@ bot.on("text", async (ctx) => {
   await ctx.reply("Нажми «Новый заказ».", mainKeyboard());
 });
 
-// Callbacks
+// callbacks
 bot.action("cats", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
@@ -832,11 +691,14 @@ bot.action("edit", async (ctx) => {
 bot.action("remove_mode", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
   const keys = Object.keys(st.cart);
   if (!keys.length) return ctx.reply("Корзина пустая.", mainKeyboard());
 
-  const rows = keys.map((k) => [Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`)]);
+  const rows = keys.map((k) => [
+    Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`)
+  ]);
   rows.push([Markup.button.callback("⬅️ Назад", st.cat ? "back_to_dishes" : "cats")]);
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
 });
@@ -873,7 +735,7 @@ bot.action("send", async (ctx) => {
   const ok = updateKitchenOrderItems(st.orderId, items);
   if (!ok) return ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
 
-  await ctx.reply(`✅ Блюда появились на ТВ: ${PUBLIC_URL}/`, mainKeyboard());
+  await ctx.reply(`✅ Блюда появились на ТВ`, mainKeyboard());
 
   st.step = "idle";
   st.orderNo = "";
