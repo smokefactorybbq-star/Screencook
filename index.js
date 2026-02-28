@@ -1,4 +1,4 @@
-// index.js (ESM) — KITCHEN PRO
+// index.js (ESM) — KITCHEN PRO (TV FIX + DEBUG)
 // ТВ-экран: / (или /screen)
 // API: /api/orders
 // Webhook: /tg/<WEBHOOK_SECRET>
@@ -58,7 +58,7 @@ const MENU_BY_CAT = {
 // ==========================
 // ORDERS memory (up to 10)
 // ==========================
-let orders = []; // [{ id, orderNo, prepMinutes, createdAt, endsAt, expiresAt, items:[{name,qty}] }]
+let orders = [];
 
 function pruneOrders() {
   const now = Date.now();
@@ -112,6 +112,13 @@ app.get("/api/orders", (_req, res) => {
   res.json(orders);
 });
 
+// (для диагностики на ТВ)
+app.get("/health", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  pruneOrders();
+  res.json({ ok: true, orders: orders.length, time: Date.now() });
+});
+
 function screenHtml() {
   return `<!doctype html>
 <html lang="ru">
@@ -135,7 +142,6 @@ function screenHtml() {
       --cols: 5;
       --rows: 4;
 
-      /* анти-оверскан */
       --safe: 40px;
     }
     *{ box-sizing:border-box; }
@@ -146,7 +152,16 @@ function screenHtml() {
       color:var(--text);
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
       overflow:hidden;
-      padding: var(--safe);
+    }
+
+    /* ✅ ВАЖНО: stage гарантированно имеет высоту/ширину на ТВ */
+    .stage{
+      position:fixed;
+      left: var(--safe);
+      right: var(--safe);
+      top: var(--safe);
+      bottom: var(--safe);
+      overflow:hidden;
     }
 
     .grid{
@@ -213,7 +228,6 @@ function screenHtml() {
       background:rgba(255,255,255,.03);
       min-width:0;
     }
-
     .name{
       flex: 1 1 auto;
       min-width:0;
@@ -221,8 +235,6 @@ function screenHtml() {
       line-height:1.12;
       white-space:normal;
       word-break:break-word;
-
-      /* перенос максимум на 2 строки */
       display:-webkit-box;
       -webkit-line-clamp:2;
       -webkit-box-orient:vertical;
@@ -236,7 +248,7 @@ function screenHtml() {
     }
 
     .placeholder{
-      flex:1 1 auto;
+      height:100%;
       display:flex;
       align-items:center;
       justify-content:center;
@@ -244,9 +256,26 @@ function screenHtml() {
       font-weight:950;
       text-align:center;
       padding: 1em;
+      font-size: 28px;
     }
 
-    /* МИГАНИЕ при <=5 минут */
+    /* ERROR overlay */
+    .error{
+      height:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:#fff;
+      font-weight:1000;
+      text-align:center;
+      padding: 1em;
+      font-size: 22px;
+      background: rgba(255,0,0,.12);
+      border: 2px solid rgba(255,0,0,.35);
+      border-radius: 18px;
+      white-space: pre-wrap;
+    }
+
     .blink{
       animation: blink 0.9s steps(2, end) infinite;
     }
@@ -256,7 +285,7 @@ function screenHtml() {
       100%{ filter: brightness(1); }
     }
 
-    /* Панель управления (в углу) */
+    /* Панель управления */
     .panel{
       position:fixed;
       right: 10px;
@@ -264,7 +293,7 @@ function screenHtml() {
       display:flex;
       gap:8px;
       z-index:9999;
-      opacity:.75;
+      opacity:.82;
       user-select:none;
     }
     .btn{
@@ -273,24 +302,32 @@ function screenHtml() {
       padding:10px 12px;
       border-radius:12px;
       border:1px solid rgba(255,255,255,.15);
-      background: rgba(15,23,48,.75);
+      background: rgba(15,23,48,.78);
       color:#fff;
       cursor:pointer;
     }
-    .btn:active{ transform: scale(.98); }
-    .tag{
+
+    .dbg{
       position:fixed;
       left: 10px;
       bottom: 10px;
-      font-size:12px;
-      color:rgba(255,255,255,.55);
-      font-weight:900;
       z-index:9999;
+      font-size:12px;
+      font-weight:900;
+      color:rgba(255,255,255,.70);
+      background: rgba(0,0,0,.25);
+      border: 1px solid rgba(255,255,255,.12);
+      padding: 8px 10px;
+      border-radius: 12px;
+      max-width: 55vw;
+      white-space: pre-wrap;
     }
   </style>
 </head>
 <body>
-  <div class="grid" id="grid"></div>
+  <div class="stage">
+    <div class="grid" id="grid"></div>
+  </div>
 
   <div class="panel">
     <button class="btn" id="safeMinus">SAFE-</button>
@@ -298,19 +335,21 @@ function screenHtml() {
     <button class="btn" id="soundBtn">SOUND</button>
     <button class="btn" id="reloadBtn">RELOAD</button>
   </div>
-  <div class="tag" id="tag"></div>
+  <div class="dbg" id="dbg">BOOT…</div>
 
 <script>
   const grid = document.getElementById('grid');
-  const tag = document.getElementById('tag');
+  const dbg = document.getElementById('dbg');
 
   const COLS = 5;
   const ROWS = 4;
   const MAX_ORDERS = 10;
 
-  // ==== settings (persist) ====
+  // settings persist
   const LS_SAFE = 'kitchen_safe';
   const LS_SOUND = 'kitchen_sound';
+
+  let soundEnabled = (localStorage.getItem(LS_SOUND) ?? 'on') === 'on';
 
   function getSafe(){
     const v = Number(localStorage.getItem(LS_SAFE));
@@ -319,31 +358,25 @@ function screenHtml() {
   function setSafe(v){
     localStorage.setItem(LS_SAFE, String(v));
     document.documentElement.style.setProperty('--safe', v + 'px');
-    tag.textContent = 'SAFE: ' + v + 'px' + ' | SOUND: ' + (soundEnabled ? 'ON' : 'OFF');
+    dbg.textContent = dbg.textContent.replace(/SAFE:\\s*\\d+px/g, 'SAFE: ' + v + 'px');
   }
-
-  let soundEnabled = (localStorage.getItem(LS_SOUND) ?? 'on') === 'on';
-
   function setSound(on){
     soundEnabled = !!on;
     localStorage.setItem(LS_SOUND, soundEnabled ? 'on' : 'off');
-    tag.textContent = 'SAFE: ' + getSafe() + 'px' + ' | SOUND: ' + (soundEnabled ? 'ON' : 'OFF');
   }
 
-  // apply stored safe
+  // apply stored
   setSafe(getSafe());
   setSound(soundEnabled);
 
-  document.getElementById('safePlus').onclick = () => setSafe(Math.min(120, getSafe() + 5));
+  document.getElementById('safePlus').onclick = () => setSafe(Math.min(140, getSafe() + 5));
   document.getElementById('safeMinus').onclick = () => setSafe(Math.max(0, getSafe() - 5));
   document.getElementById('soundBtn').onclick = async () => {
     setSound(!soundEnabled);
-    // пробуем “разлочить” звук по клику
     if (soundEnabled) { try { await beep(0.02, 880); } catch{} }
   };
   document.getElementById('reloadBtn').onclick = () => location.reload();
 
-  // ==== helpers ====
   function fmt2(n){ return String(n).padStart(2,'0'); }
   function mmss(ms){
     const s = Math.max(0, Math.floor(ms/1000));
@@ -360,25 +393,22 @@ function screenHtml() {
     return 'var(--green)';
   }
 
-  // === Sound (WebAudio beep) ===
+  // WebAudio beep
   let audioCtx = null;
   async function beep(duration=0.08, freq=880){
     if (!soundEnabled) return;
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
-
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     o.type = 'square';
     o.frequency.value = freq;
-    g.gain.value = 0.02; // тихо, но слышно
-    o.connect(g);
-    g.connect(audioCtx.destination);
+    g.gain.value = 0.02;
+    o.connect(g); g.connect(audioCtx.destination);
     o.start();
     o.stop(audioCtx.currentTime + duration);
   }
 
-  // Подгон текста (ширина+высота)
   function fitText(el, maxPx, minPx){
     if (!el) return;
     let size = maxPx;
@@ -388,8 +418,6 @@ function screenHtml() {
       el.style.fontSize = size + 'px';
     }
   }
-
-  // Подгон шрифта списка блюд: уменьшаем, пока всё не влезет
   function fitItems(container, maxPx, minPx){
     if (!container) return;
     let size = maxPx;
@@ -401,14 +429,12 @@ function screenHtml() {
     }
   }
 
-  // сколько рядов (1..3) по кол-ву позиций
   function spanFor(itemsCount){
     if (itemsCount >= 12) return 3;
     if (itemsCount >= 6) return 2;
     return 1;
   }
 
-  // укладчик в сетку COLS x ROWS
   function placeCards(cards){
     const occ = Array.from({length: ROWS}, () => Array(COLS).fill(false));
     const placed = [];
@@ -421,14 +447,11 @@ function screenHtml() {
       return true;
     }
     function doPlace(r, c, span, card){
-      for (let rr = r; rr < r + span; rr++){
-        occ[rr][c] = true;
-      }
+      for (let rr = r; rr < r + span; rr++) occ[rr][c] = true;
       placed.push({ ...card, r, c, span });
     }
 
     for (const card of cards){
-      // сперва как надо, если не влезет — уменьшаем span
       for (let trySpan = card.span; trySpan >= 1; trySpan--){
         let done = false;
         for (let r=0; r<ROWS; r++){
@@ -447,25 +470,21 @@ function screenHtml() {
     return placed;
   }
 
-  // READY sound: чтобы не пищал каждую секунду — запоминаем уже “пропищанные”
   const readyBeeped = new Set();
 
-  function render(orders){
+  function render(list){
     grid.innerHTML = "";
-    const now = Date.now();
-    const list = Array.isArray(orders) ? orders.slice(0, MAX_ORDERS) : [];
 
-    if (!list.length){
-      const empty = document.createElement('div');
-      empty.className = 'card';
-      empty.style.gridColumn = '1 / span 5';
-      empty.style.gridRow = '1 / span 4';
-      empty.innerHTML = '<div class="placeholder">Нет заказов</div>';
-      grid.appendChild(empty);
+    if (!Array.isArray(list) || list.length === 0){
+      const box = document.createElement('div');
+      box.className = 'placeholder';
+      box.textContent = 'Нет заказов';
+      grid.appendChild(box);
       return;
     }
 
-    const cards = list.map(o => {
+    const now = Date.now();
+    const cards = list.slice(0, MAX_ORDERS).map(o => {
       const items = Array.isArray(o.items) ? o.items : [];
       return { o, span: spanFor(items.length) };
     });
@@ -489,14 +508,12 @@ function screenHtml() {
           return \`<div class="item"><div class="name">\${name}</div><div class="qty">x\${qty}</div></div>\`;
         }).join('');
       } else {
-        itemsHtml = '<div class="placeholder">Выбор блюд…</div>';
+        itemsHtml = '<div class="placeholder" style="font-size:18px">Выбор блюд…</div>';
       }
 
       const card = document.createElement('div');
       card.className = 'card';
-
-      // мигание при <=5 минут и >0
-      if (remMs > 0 && remMs <= 5 * 60_000) card.classList.add('blink');
+      if (remMs > 0 && remMs <= 5*60*1000) card.classList.add('blink');
 
       card.style.gridColumn = (p.c + 1) + ' / span 1';
       card.style.gridRow = (p.r + 1) + ' / span ' + p.span;
@@ -511,16 +528,13 @@ function screenHtml() {
 
       grid.appendChild(card);
 
-      // SOUND: когда становится READY впервые
       if (remMs <= 0 && !readyBeeped.has(o.id)){
         readyBeeped.add(o.id);
-        // двойной сигнал
         beep(0.07, 880);
         setTimeout(() => beep(0.07, 660), 120);
       }
     }
 
-    // подгон шрифтов после layout
     requestAnimationFrame(() => {
       grid.querySelectorAll('[data-fit="order"]').forEach(el => fitText(el, 40, 11));
       grid.querySelectorAll('[data-fit="remain"]').forEach(el => fitText(el, 36, 11));
@@ -528,20 +542,39 @@ function screenHtml() {
     });
   }
 
+  function showError(msg){
+    grid.innerHTML = "";
+    const e = document.createElement('div');
+    e.className = 'error';
+    e.textContent = msg;
+    grid.appendChild(e);
+  }
+
   async function tick(){
     try{
       const r = await fetch('/api/orders', { cache:'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
+
+      dbg.textContent =
+        'API: OK\\n' +
+        'ORDERS: ' + (Array.isArray(j) ? j.length : '?') + '\\n' +
+        'SAFE: ' + getSafe() + 'px\\n' +
+        'SOUND: ' + (soundEnabled ? 'ON' : 'OFF');
+
       render(j);
-    }catch(e){
-      // ignore
+    } catch (e){
+      dbg.textContent =
+        'API: ERROR\\n' +
+        String(e && e.message ? e.message : e) + '\\n' +
+        'SAFE: ' + getSafe() + 'px\\n' +
+        'Tip: open /api/orders';
+      showError('ОШИБКА ЗАГРУЗКИ /api/orders\\n\\n' + (e && e.message ? e.message : String(e)));
     }
   }
 
   tick();
   setInterval(tick, 1000);
-
-  // На всякий случай: если ТВ меняет размер/ориентацию
   window.addEventListener('resize', () => tick());
 </script>
 </body>
@@ -734,7 +767,7 @@ bot.on("text", async (ctx) => {
       return;
     }
 
-    // ✅ Запускаем таймер сразу (даже пока выбирают блюда)
+    // ✅ таймер стартует сразу
     const id = addKitchenOrder({ orderNo: st.orderNo.trim(), prepMinutes: st.prepMinutes });
     st.orderId = id;
 
@@ -763,11 +796,9 @@ bot.action(/cat:(.+)/, async (ctx) => {
 bot.action(/add:(.+)/, async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   const name = ctx.match[1];
   st.cart[name] = (st.cart[name] || 0) + 1;
-
   if (st.cat) await showDishes(ctx, st.cat);
   else await showCategories(ctx);
 });
@@ -801,7 +832,6 @@ bot.action("edit", async (ctx) => {
 bot.action("remove_mode", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
-
   const st = getState(ctx);
   const keys = Object.keys(st.cart);
   if (!keys.length) return ctx.reply("Корзина пустая.", mainKeyboard());
@@ -845,7 +875,6 @@ bot.action("send", async (ctx) => {
 
   await ctx.reply(`✅ Блюда появились на ТВ: ${PUBLIC_URL}/`, mainKeyboard());
 
-  // reset
   st.step = "idle";
   st.orderNo = "";
   st.prepMinutes = 25;
