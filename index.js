@@ -48,37 +48,9 @@ const CATEGORIES = [
 ];
 
 const MENU_BY_CAT = {
-  soups: [
-    "Борщ",
-    "Солянка",
-    "Щи",
-    "Харчо",
-    "Минестроне",
-    "Грибной суп",
-    "Куриный суп",
-    "Гороховый суп",
-  ],
-  mains: [
-    "Пельмени",
-    "Болоньезе",
-    "Макароны по-флотски",
-    "Овощное рагу",
-    "Гуляш",
-    "Плов",
-    "Тушёнка",
-  ],
-  sides: [
-    "Пюре",
-    "Рис",
-    "Гречка",
-    "Лапша",
-    "Картошка тушёная",
-    "Капуста тушёная",
-    "Хлеб",
-    "Соус BBQ",
-    "Соус чесночный",
-    "Соус острый",
-  ],
+  soups: ["Борщ", "Солянка", "Щи", "Харчо", "Минестроне", "Грибной суп", "Куриный суп", "Гороховый суп"],
+  mains: ["Пельмени", "Болоньезе", "Макароны по-флотски", "Овощное рагу", "Гуляш", "Плов", "Тушёнка"],
+  sides: ["Пюре", "Рис", "Гречка", "Лапша", "Картошка тушёная", "Капуста тушёная", "Хлеб", "Соус BBQ", "Соус чесночный", "Соус острый"],
   grill: ["Рёбра BBQ", "Курица гриль", "Шашлык куриный", "Колбаски", "Сосиски"],
   salads: ["Салат", "Огурец свежий", "Кимчи", "Морковь по-корейски"],
 };
@@ -102,11 +74,11 @@ function addKitchenOrder(orderNo, prepMinutes) {
 
   const o = {
     id: crypto.randomUUID(),
-    orderNo: orderNo,
-    prepMinutes: prepMinutes,
-    createdAt: createdAt,
-    endsAt: endsAt,
-    expiresAt: expiresAt,
+    orderNo,
+    prepMinutes,
+    createdAt,
+    endsAt,
+    expiresAt,
     items: [],
   };
   orders.unshift(o);
@@ -141,7 +113,10 @@ app.get("/api/orders", (_req, res) => {
 });
 
 // ==========================
-// SCREEN HTML (TV SAFE, NO FONT JUMP, DYNAMIC CARD HEIGHT)
+// SCREEN HTML (10 windows fixed, up to 15 items visible)
+// - orderNo/time font unchanged (as you asked)
+// - items font tuned to fit 15 rows
+// - no auto-fit loops => no font jumping
 // ==========================
 function screenHtml() {
   return `<!doctype html>
@@ -166,34 +141,48 @@ function screenHtml() {
       --safe: 40px;
 
       --gap: 10px;
+
+      /* Items style tuned for up to 15 rows */
+      --item-font: 14px;
+      --item-line: 1.05;
+      --item-pad-v: 4px;
+      --item-pad-h: 8px;
+      --item-gap: 6px;
+      --item-radius: 12px;
     }
+
     *{ box-sizing:border-box; }
     html,body{ width:100%; height:100%; margin:0; }
     body{
       background:var(--bg);
       color:var(--text);
+      overflow:hidden; /* FIXED 10 windows, no page scrolling */
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-
-      /* важно: даём странице расти по высоте */
-      overflow-y:auto;
-      overflow-x:hidden;
     }
 
     .stage{
-      position:relative;
-      padding: var(--safe);
-      min-height:100vh;
+      position:fixed;
+      left:var(--safe);
+      right:var(--safe);
+      top:var(--safe);
+      bottom:var(--safe);
+      overflow:hidden;
     }
 
-    /* 10 карточек: 5 колонок, 2 ряда минимум, высота карточек = контент */
+    /* 10 карточек: 5 в ряд, 2 ряда */
     .wrap{
-      display:grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      width:100%;
+      height:100%;
+      display:flex;
+      flex-wrap:wrap;
+      align-content:stretch;
+      justify-content:space-between;
       gap: var(--gap);
-      align-items:start;
     }
 
     .card{
+      width: calc((100% - (var(--gap) * 4)) / 5);
+      height: calc((100% - var(--gap)) / 2);
       background:var(--cell);
       border:1px solid var(--border);
       border-radius:18px;
@@ -201,6 +190,7 @@ function screenHtml() {
       display:flex;
       flex-direction:column;
       min-width:0;
+      min-height:0;
       box-shadow:0 12px 30px rgba(0,0,0,.35);
     }
 
@@ -215,7 +205,7 @@ function screenHtml() {
       min-height:0;
     }
 
-    /* СТАБИЛЬНЫЙ ШРИФТ (без автоподгона) */
+    /* ОСТАВЛЯЕМ КАК ЕСТЬ (шрифт номера/времени) */
     .orderNo{
       flex:1 1 auto;
       min-width:0;
@@ -226,7 +216,6 @@ function screenHtml() {
       text-overflow:ellipsis;
       font-size: clamp(16px, 1.25vw, 34px);
     }
-
     .remain{
       flex:0 0 auto;
       font-weight:1000;
@@ -234,63 +223,76 @@ function screenHtml() {
       white-space:nowrap;
       font-size: clamp(16px, 1.15vw, 32px);
 
-      /* цифры одинаковой ширины => таймер не "прыгает" */
       font-variant-numeric: tabular-nums;
       letter-spacing: 0.5px;
     }
 
     .items{
       flex:1 1 auto;
-      padding: 12px 14px 14px;
-
-      /* НЕ режем контент — карточка растет */
-      overflow:visible;
-
+      padding: 10px 12px 12px;
+      overflow:hidden; /* фиксируем 10 окон, поэтому режем по 15 строк */
+      min-height:0;
       display:flex;
       flex-direction:column;
-      gap: 8px;
-      min-height:0;
+      gap: var(--item-gap);
     }
 
     .item{
       display:flex;
-      align-items:flex-start;
-      gap: 10px;
-      padding: 10px 12px;
+      align-items:center;
+      gap: 8px;
+      padding: var(--item-pad-v) var(--item-pad-h);
       border:1px solid rgba(255,255,255,.10);
-      border-radius:16px;
+      border-radius: var(--item-radius);
       background: rgba(255,255,255,.03);
       min-width:0;
     }
 
+    /* ОДНА СТРОКА, чтобы уместить 15 позиций */
     .name{
       flex:1 1 auto;
       min-width:0;
       font-weight:950;
-      line-height:1.12;
-
-      /* показываем полностью */
-      white-space:normal;
-      word-break:break-word;
-
-      font-size: clamp(12px, 0.95vw, 22px);
+      line-height: var(--item-line);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      font-size: var(--item-font);
     }
-
     .qty{
       flex:0 0 auto;
       font-weight:1000;
       color: rgba(255,255,255,.75);
       white-space:nowrap;
-      font-size: clamp(12px, 0.95vw, 22px);
+      font-size: var(--item-font);
+      line-height: var(--item-line);
       font-variant-numeric: tabular-nums;
     }
 
     .placeholder{
-      padding: 18px 14px 20px;
+      flex:1 1 auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
       color:rgba(255,255,255,.28);
       font-weight:1000;
       text-align:center;
-      font-size: clamp(14px, 1.1vw, 24px);
+      padding: 10px;
+      font-size: 18px;
+    }
+
+    .more{
+      margin-top:auto;
+      padding: 6px 10px;
+      border:1px dashed rgba(255,255,255,.18);
+      border-radius: 12px;
+      color: rgba(255,255,255,.65);
+      font-weight: 900;
+      font-size: 13px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      background: rgba(0,0,0,.18);
     }
 
     .blink{
@@ -329,7 +331,9 @@ function screenHtml() {
 (function(){
   var wrap = document.getElementById('wrap');
   var dbg = document.getElementById('dbg');
+
   var TOTAL = 10;
+  var MAX_ITEMS = 15;
 
   var lastSig = "";
   var hasRenderedOnce = false;
@@ -368,11 +372,18 @@ function screenHtml() {
 
     var itemsHtml = "";
     if (items){
-      for (var i=0;i<items.length;i++){
+      var shown = 0;
+      for (var i=0; i<items.length && shown < MAX_ITEMS; i++){
         var it = items[i] || {};
         var name = esc(it.name);
         var qty = Number(it.qty || 0);
         itemsHtml += '<div class="item"><div class="name">'+name+'</div><div class="qty">x'+qty+'</div></div>';
+        shown++;
+      }
+
+      if (items.length > MAX_ITEMS){
+        var rest = items.length - MAX_ITEMS;
+        itemsHtml += '<div class="more">+ ещё ' + rest + ' поз.</div>';
       }
     } else {
       itemsHtml = '<div class="placeholder">Выбор блюд…</div>';
@@ -456,7 +467,7 @@ function screenHtml() {
     }
   }
 
-  // сигнатура чтобы не перерисовывать каждую секунду
+  // сигнатура чтобы не перерисовывать постоянно (шрифты тогда не "пляшут")
   function signature(list){
     try{
       var slim = (list||[]).slice(0, TOTAL).map(function(o){
@@ -465,7 +476,9 @@ function screenHtml() {
           id: o.id,
           orderNo: o.orderNo,
           endsAt: o.endsAt,
-          items: (o.items||[]).map(function(it){ return [it.name, it.qty]; })
+          // ограничим для сигнатуры первыми 15, чтобы сравнение было лёгким
+          items: (o.items||[]).slice(0, MAX_ITEMS).map(function(it){ return [it.name, it.qty]; }),
+          itemsLen: (o.items||[]).length
         };
       });
       return JSON.stringify(slim);
@@ -571,14 +584,8 @@ function categoriesKeyboard() {
     if (b) row.push(Markup.button.callback(b.label, `cat:${b.key}`));
     rows.push(row);
   }
-  rows.push([
-    Markup.button.callback(BTN_CLEAR, "clear"),
-    Markup.button.callback(BTN_SEND, "send"),
-  ]);
-  rows.push([
-    Markup.button.callback(BTN_EDIT, "edit"),
-    Markup.button.callback(BTN_REMOVE_MODE, "remove_mode"),
-  ]);
+  rows.push([Markup.button.callback(BTN_CLEAR, "clear"), Markup.button.callback(BTN_SEND, "send")]);
+  rows.push([Markup.button.callback(BTN_EDIT, "edit"), Markup.button.callback(BTN_REMOVE_MODE, "remove_mode")]);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -594,14 +601,8 @@ function dishesKeyboard(catKey) {
     rows.push(row);
   }
 
-  rows.push([
-    Markup.button.callback(BTN_BACK_CATS, "cats"),
-    Markup.button.callback(BTN_CLEAR, "clear"),
-  ]);
-  rows.push([
-    Markup.button.callback(BTN_SEND, "send"),
-    Markup.button.callback(BTN_REMOVE_MODE, "remove_mode"),
-  ]);
+  rows.push([Markup.button.callback(BTN_BACK_CATS, "cats"), Markup.button.callback(BTN_CLEAR, "clear")]);
+  rows.push([Markup.button.callback(BTN_SEND, "send"), Markup.button.callback(BTN_REMOVE_MODE, "remove_mode")]);
   rows.push([Markup.button.callback(BTN_EDIT, "edit")]);
 
   return Markup.inlineKeyboard(rows);
@@ -609,7 +610,8 @@ function dishesKeyboard(catKey) {
 
 async function showCategories(ctx) {
   const st = getState(ctx);
-  const text = `🧾 Создание заказа
+  const text =
+`🧾 Создание заказа
 
 Номер: ${st.orderNo || "—"}
 Время: ${st.prepMinutes} мин
@@ -620,11 +622,8 @@ ${cartSummary(st.cart)}
 Выбери категорию:`;
 
   if (ctx.updateType === "callback_query") {
-    try {
-      await ctx.editMessageText(text, categoriesKeyboard());
-    } catch {
-      await ctx.reply(text, categoriesKeyboard());
-    }
+    try { await ctx.editMessageText(text, categoriesKeyboard()); }
+    catch { await ctx.reply(text, categoriesKeyboard()); }
   } else {
     await ctx.reply(text, categoriesKeyboard());
   }
@@ -633,9 +632,10 @@ ${cartSummary(st.cart)}
 async function showDishes(ctx, catKey) {
   const st = getState(ctx);
   st.cat = catKey;
-  const catLabel = CATEGORIES.find((c) => c.key === catKey)?.label || catKey;
+  const catLabel = CATEGORIES.find(c => c.key === catKey)?.label || catKey;
 
-  const text = `📂 ${catLabel}
+  const text =
+`📂 ${catLabel}
 
 Номер: ${st.orderNo || "—"} | Время: ${st.prepMinutes} мин
 
@@ -645,11 +645,8 @@ ${cartSummary(st.cart)}
 Нажимай блюда (➕):`;
 
   if (ctx.updateType === "callback_query") {
-    try {
-      await ctx.editMessageText(text, dishesKeyboard(catKey));
-    } catch {
-      await ctx.reply(text, dishesKeyboard(catKey));
-    }
+    try { await ctx.editMessageText(text, dishesKeyboard(catKey)); }
+    catch { await ctx.reply(text, dishesKeyboard(catKey)); }
   } else {
     await ctx.reply(text, dishesKeyboard(catKey));
   }
@@ -688,10 +685,7 @@ bot.on("text", async (ctx) => {
     if (st.orderId) deleteKitchenOrder(st.orderId);
     st.orderNo = txt;
     st.step = "entering_time";
-    await ctx.reply(
-      "Введите время приготовления (минуты 1–240), например 20:",
-      mainKeyboard()
-    );
+    await ctx.reply("Введите время приготовления (минуты 1–240), например 20:", mainKeyboard());
     return;
   }
 
@@ -780,7 +774,7 @@ bot.action("remove_mode", async (ctx) => {
   if (!keys.length) return ctx.reply("Корзина пустая.", mainKeyboard());
 
   const rows = keys.map((k) => [
-    Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`),
+    Markup.button.callback(`➖ ${k} (x${st.cart[k]})`, `rem:${k}`)
   ]);
   rows.push([Markup.button.callback("⬅️ Назад", st.cat ? "back_to_dishes" : "cats")]);
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
@@ -802,7 +796,7 @@ bot.action(/rem:(.+)/, async (ctx) => {
   const v = (st.cart[name] || 0) - 1;
   if (v <= 0) delete st.cart[name];
   else st.cart[name] = v;
-  await ctx.reply(`Ок: ${name}`, mainKeyboard());
+  await ctx.reply(\`Ок: \${name}\`, mainKeyboard());
 });
 
 bot.action("send", async (ctx) => {
@@ -816,14 +810,9 @@ bot.action("send", async (ctx) => {
   if (!items.length) return ctx.reply("❌ Корзина пустая.", mainKeyboard());
 
   const ok = updateKitchenOrderItems(st.orderId, items);
-  if (!ok) {
-    return ctx.reply(
-      "❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.",
-      mainKeyboard()
-    );
-  }
+  if (!ok) return ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
 
-  await ctx.reply(`✅ Блюда появились на ТВ`, mainKeyboard());
+  await ctx.reply(\`✅ Блюда появились на ТВ\`, mainKeyboard());
 
   st.step = "idle";
   st.orderNo = "";
