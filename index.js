@@ -1,5 +1,6 @@
 // index.js (ESM)
-// One deploy: bot creates orders -> this server stores in memory -> TV opens "/" (or "/screen").
+// Один деплой: бот -> этот же сервер -> экран ТВ.
+// Экран: /  (или /screen)
 // API: /api/orders
 // Webhook: /tg/<WEBHOOK_SECRET>
 
@@ -12,7 +13,7 @@ import { Telegraf, Markup, session } from "telegraf";
 // ENV
 // ==========================
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const PUBLIC_URL = process.env.PUBLIC_URL;       // e.g. https://screencook-production.up.railway.app
+const PUBLIC_URL = process.env.PUBLIC_URL;       // например https://screencook-production.up.railway.app
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
@@ -58,32 +59,49 @@ const MENU_BY_CAT = {
 // ==========================
 // ORDERS memory (up to 10)
 // ==========================
-let orders = []; // [{ id, orderNo, prepMinutes, createdAt, endsAt, expiresAt, items:[{name,qty}], totalQty }]
+// items могут быть пустыми сначала — таймер уже идёт, блюда добавятся позже.
+let orders = []; // [{ id, orderNo, prepMinutes, createdAt, endsAt, expiresAt, items:[{name,qty}] }]
 
 function pruneOrders() {
   const now = Date.now();
   orders = orders.filter((o) => o.expiresAt > now);
+  // новые сверху
   orders.sort((a, b) => b.createdAt - a.createdAt);
   orders = orders.slice(0, 10);
 }
 
-function addKitchenOrder({ orderNo, prepMinutes, items }) {
+function addKitchenOrder({ orderNo, prepMinutes }) {
   const createdAt = Date.now();
   const endsAt = createdAt + prepMinutes * 60_000;
-  const expiresAt = endsAt + 5 * 60_000; // хранить ещё 5 минут после READY
-  const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+  const expiresAt = endsAt + 5 * 60_000;
 
-  orders.unshift({
+  const o = {
     id: crypto.randomUUID(),
     orderNo,
     prepMinutes,
     createdAt,
     endsAt,
     expiresAt,
-    items,
-    totalQty,
-  });
+    items: [], // потом добавим
+  };
+  orders.unshift(o);
+  pruneOrders();
+  return o.id;
+}
 
+function updateKitchenOrderItems(orderId, items) {
+  const idx = orders.findIndex((o) => o.id === orderId);
+  if (idx === -1) return false;
+
+  orders[idx].items = Array.isArray(items) ? items : [];
+  // обновим сортировку/обрезку
+  pruneOrders();
+  return true;
+}
+
+function deleteKitchenOrder(orderId) {
+  if (!orderId) return;
+  orders = orders.filter((o) => o.id !== orderId);
   pruneOrders();
 }
 
@@ -108,14 +126,15 @@ function screenHtml() {
   <title>Kitchen Screen</title>
   <style>
     :root{
-      --bg:#0b1220;
-      --card:#121a2b;
-      --text:#ffffff;
-      --muted:#9aa7c7;
+      --bg:#070b14;
+      --cell:#11182b;
       --border:rgba(255,255,255,.10);
-      --orange:#ff9900;   /* >10 мин */
-      --green:#00ff66;    /* <=10 мин */
-      --ready:#00ff00;    /* READY */
+      --text:#ffffff;
+      --muted:rgba(255,255,255,.55);
+      --green:#00ff66;
+      --yellow:#ffd400;
+      --red:#ff3b30;
+      --ready:#b0b7c6;
     }
     *{box-sizing:border-box}
     body{
@@ -123,142 +142,159 @@ function screenHtml() {
       background:var(--bg);
       color:var(--text);
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      overflow:hidden;
     }
+
     header{
-      position:sticky; top:0;
-      background:linear-gradient(180deg, rgba(11,18,32,.95), rgba(11,18,32,.75));
-      backdrop-filter: blur(6px);
-      border-bottom:1px solid var(--border);
-      padding:14px 18px;
+      height:64px;
       display:flex;
       align-items:center;
       justify-content:space-between;
-      gap:12px;
-      z-index:10;
+      padding:0 16px;
+      border-bottom:1px solid var(--border);
+      background:linear-gradient(180deg, rgba(7,11,20,.98), rgba(7,11,20,.85));
+      position:relative;
+      z-index:5;
     }
     .title{
-      font-size:22px;
-      font-weight:900;
-      letter-spacing:.3px;
+      font-weight:950;
+      letter-spacing:.2px;
+      font-size:20px;
     }
     .meta{
+      font-weight:800;
+      font-size:13px;
       color:var(--muted);
-      font-weight:700;
-      font-size:14px;
       display:flex;
-      gap:14px;
+      gap:12px;
       align-items:center;
       white-space:nowrap;
     }
     .dot{
-      width:8px;height:8px;border-radius:99px;background:var(--green);
-      box-shadow:0 0 16px rgba(0,255,102,.4);
+      width:8px;height:8px;border-radius:999px;
+      background:var(--green);
+      box-shadow:0 0 14px rgba(0,255,102,.35);
       display:inline-block;
     }
 
-    main{ padding:16px; }
+    main{
+      height: calc(100vh - 64px);
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      padding:10px;
+    }
 
+    /* Сетка 10 квадратов: 5х2 */
     .grid{
       display:grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap:14px;
-    }
-    @media (min-width: 1200px){
-      .grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    }
-    @media (min-width: 1700px){
-      .grid{ grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      gap:10px;
+      justify-content:center;
+      align-content:center;
+      /* колонки/ряды выставит JS через px, чтобы были квадраты */
     }
 
-    .card{
-      background:var(--card);
+    .cell{
+      width: var(--cellSize, 200px);
+      height: var(--cellSize, 200px);
+      background:var(--cell);
       border:1px solid var(--border);
-      border-radius:18px;
-      padding:14px 14px 12px;
-      box-shadow:0 10px 30px rgba(0,0,0,.25);
-      min-height:140px;
+      border-radius:16px;
+      padding:10px;
       display:flex;
       flex-direction:column;
-      gap:10px;
+      overflow:hidden;
+      box-shadow:0 12px 30px rgba(0,0,0,.35);
     }
+
     .top{
+      flex: 0 0 46%;
       display:flex;
-      align-items:flex-start;
-      justify-content:space-between;
-      gap:12px;
+      flex-direction:column;
+      justify-content:center;
+      gap:6px;
+      min-height:0;
     }
+
     .orderNo{
-      font-size:24px;
-      font-weight:950;
-      line-height:1.05;
-    }
-    .badges{
-      display:flex;
-      flex-direction:column;
-      align-items:flex-end;
-      gap:8px;
-      min-width:160px;
-    }
-    .badge{
-      width:100%;
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-      align-items:center;
-      padding:8px 10px;
-      border-radius:14px;
-      border:1px solid var(--border);
-      font-weight:900;
-      letter-spacing:.2px;
-    }
-    .badge small{
-      font-weight:800;
-      color:rgba(255,255,255,.75);
-    }
-    .badge.orange{ border-color: rgba(255,153,0,.35); box-shadow:0 0 0 1px rgba(255,153,0,.10) inset; }
-    .badge.green{ border-color: rgba(0,255,102,.35); box-shadow:0 0 0 1px rgba(0,255,102,.10) inset; }
-    .badge.ready{ border-color: rgba(0,255,0,.45); box-shadow:0 0 0 1px rgba(0,255,0,.12) inset; }
-
-    .timeValue{
-      font-size:18px;
-      font-weight:950;
+      font-weight:1000;
+      line-height:1.02;
+      text-align:center;
+      letter-spacing:.4px;
+      /* font-size подберём JS */
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
 
-    .list{
-      margin:0;
-      padding:0;
-      list-style:none;
+    .remain{
+      font-weight:1000;
+      line-height:1.02;
+      text-align:center;
+      /* цвет/размер задаст JS */
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .items{
+      flex: 1 1 auto;
+      margin-top:6px;
+      border-top:1px solid rgba(255,255,255,.08);
+      padding-top:8px;
+      overflow:hidden;
+      color:rgba(255,255,255,.92);
+      font-weight:850;
+      font-size:14px;
+      line-height:1.15;
       display:flex;
       flex-direction:column;
-      gap:8px;
+      gap:6px;
     }
-    .li{
+
+    .item{
       display:flex;
       justify-content:space-between;
-      gap:10px;
-      border:1px solid var(--border);
+      gap:8px;
+      padding:6px 8px;
+      border:1px solid rgba(255,255,255,.08);
       border-radius:12px;
-      padding:8px 10px;
       background:rgba(255,255,255,.03);
-      font-weight:800;
+      min-width:0;
     }
-    .li span{ color:var(--muted); font-weight:900; }
+    .item .name{
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .item .qty{
+      flex:0 0 auto;
+      color:rgba(255,255,255,.75);
+      font-weight:950;
+      white-space:nowrap;
+    }
 
-    .empty{
-      margin-top:14px;
-      border:1px dashed rgba(255,255,255,.18);
-      border-radius:18px;
-      padding:22px;
-      color:var(--muted);
-      font-weight:800;
+    .placeholder{
+      flex:1 1 auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:rgba(255,255,255,.45);
+      font-weight:900;
+      font-size:14px;
       text-align:center;
+      padding:8px;
     }
-    .hint{
-      margin-top:10px;
-      color:rgba(255,255,255,.35);
-      font-weight:700;
-      text-align:center;
-      font-size:12px;
+
+    .emptyCell{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:rgba(255,255,255,.25);
+      font-weight:950;
+      font-size:22px;
+      letter-spacing:.3px;
     }
   </style>
 </head>
@@ -274,87 +310,126 @@ function screenHtml() {
 
   <main>
     <div class="grid" id="grid"></div>
-    <div class="empty" id="empty" style="display:none">Заказов нет</div>
-    <div class="hint">Источник: /api/orders • Обновление каждые 2 секунды</div>
   </main>
 
 <script>
   const grid = document.getElementById('grid');
-  const empty = document.getElementById('empty');
   const updated = document.getElementById('updated');
   const statusEl = document.getElementById('status');
   const dot = document.getElementById('dot');
 
+  const COLS = 5;
+  const ROWS = 2;
+  const TOTAL = COLS * ROWS;
+
   function fmt2(n){ return String(n).padStart(2,'0'); }
+
   function mmss(ms){
     const s = Math.max(0, Math.floor(ms/1000));
     const m = Math.floor(s/60);
     const ss = s%60;
     return m + ":" + fmt2(ss);
   }
-  function badgeClass(remainingMs){
-    if (remainingMs <= 0) return 'ready';
-    const min = remainingMs / 60000;
-    return (min <= 10) ? 'green' : 'orange';
-  }
 
   function esc(s){ return String(s||'').replace(/</g,'&lt;'); }
 
+  // Цвет "ОСТАЛОСЬ" по интервалам:
+  // 40–25 зелёный, 25–10 жёлтый, 10–0 красный
+  function remainColor(remMin){
+    if (remMin <= 0) return 'var(--ready)';
+    if (remMin <= 10) return 'var(--red)';
+    if (remMin <= 25) return 'var(--yellow)';
+    // 25..40 и выше -> зелёный (если вдруг >40 — тоже зелёный)
+    return 'var(--green)';
+  }
+
+  // Сделать 10 одинаковых квадратов, чтобы точно помещались в экран
+  function layoutSquares(){
+    const headerH = 64;
+    const gap = 10;
+    const pad = 10 * 2; // main padding left+right approx
+    const w = window.innerWidth - 20; // main padding
+    const h = window.innerHeight - headerH - 20;
+
+    const cellW = (w - gap * (COLS - 1)) / COLS;
+    const cellH = (h - gap * (ROWS - 1)) / ROWS;
+
+    const size = Math.floor(Math.min(cellW, cellH));
+
+    grid.style.setProperty('--cellSize', size + 'px');
+    grid.style.gridTemplateColumns = \`repeat(\${COLS}, \${size}px)\`;
+    grid.style.gridAutoRows = size + 'px';
+    grid.style.gap = gap + 'px';
+  }
+
+  // Автоподбор шрифта, чтобы текст влезал
+  function fitText(el, maxPx, minPx){
+    if (!el) return;
+    let size = maxPx;
+    el.style.fontSize = size + 'px';
+
+    // Подгоняем пока не влезет по ширине
+    while (size > minPx && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight)){
+      size -= 1;
+      el.style.fontSize = size + 'px';
+    }
+  }
+
   function render(orders){
     grid.innerHTML = '';
-    if (!orders || !orders.length){
-      empty.style.display = 'block';
-      return;
-    }
-    empty.style.display = 'none';
 
     const now = Date.now();
+    const list = Array.isArray(orders) ? orders.slice(0, 10) : [];
 
-    for (const o of orders){
-      const rem = (o.endsAt || 0) - now;
-      const cls = badgeClass(rem);
-      const timerText = (rem <= 0) ? "READY" : mmss(rem);
+    for (let i = 0; i < TOTAL; i++){
+      const o = list[i];
 
-      const itemsHtml = (o.items || []).map(it => {
-        const name = esc(it.name);
-        const qty = Number(it.qty || 0);
-        return \`<li class="li"><div>\${name}</div><div><span>x</span>\${qty}</div></li>\`;
-      }).join('');
+      const cell = document.createElement('div');
+      cell.className = 'cell';
 
-      const totalQty = Number(o.totalQty || 0);
-      const prep = Number(o.prepMinutes || 0);
+      if (!o){
+        cell.innerHTML = '<div class="emptyCell">—</div>';
+        grid.appendChild(cell);
+        continue;
+      }
 
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.innerHTML = \`
+      const remMs = (o.endsAt || 0) - now;
+      const remText = (remMs <= 0) ? 'READY' : ('ОСТАЛОСЬ ' + mmss(remMs));
+      const remMin = remMs / 60000;
+      const color = remainColor(remMin);
+
+      const items = Array.isArray(o.items) ? o.items : [];
+
+      const itemsHtml = items.length
+        ? '<div class="items">' + items.map(it => {
+            const name = esc(it.name);
+            const qty = Number(it.qty || 0);
+            return \`<div class="item"><div class="name">\${name}</div><div class="qty">x\${qty}</div></div>\`;
+          }).join('') + '</div>'
+        : '<div class="placeholder">Выбор блюд…</div>';
+
+      cell.innerHTML = \`
         <div class="top">
-          <div>
-            <div class="orderNo">\${esc(o.orderNo||'—')}</div>
-          </div>
-          <div class="badges">
-            <div class="badge \${cls}">
-              <small>Осталось</small>
-              <div class="timeValue">\${timerText}</div>
-            </div>
-            <div class="badge">
-              <small>Время</small>
-              <div class="timeValue">\${prep} мин</div>
-            </div>
-            <div class="badge">
-              <small>Кол-во</small>
-              <div class="timeValue">\${totalQty}</div>
-            </div>
-          </div>
+          <div class="orderNo" data-fit="order">\${esc(o.orderNo || '—')}</div>
+          <div class="remain" data-fit="remain" style="color:\${color}">\${remText}</div>
         </div>
-        <ul class="list">\${itemsHtml}</ul>
+        \${itemsHtml}
       \`;
-      grid.appendChild(card);
+
+      grid.appendChild(cell);
     }
+
+    // После рендера — подгон шрифтов
+    const orderEls = grid.querySelectorAll('[data-fit="order"]');
+    const remEls = grid.querySelectorAll('[data-fit="remain"]');
+
+    orderEls.forEach(el => fitText(el, 46, 14));
+    remEls.forEach(el => fitText(el, 34, 12));
   }
 
   async function tick(){
     try{
-      const r = await fetch('/api/orders', { cache: 'no-store' });
+      const r = await fetch('/api/orders', { cache:'no-store' });
       const j = await r.json();
       render(j);
 
@@ -363,28 +438,34 @@ function screenHtml() {
 
       statusEl.textContent = "онлайн";
       dot.style.background = "var(--green)";
-      dot.style.boxShadow = "0 0 16px rgba(0,255,102,.4)";
+      dot.style.boxShadow = "0 0 14px rgba(0,255,102,.35)";
     }catch(e){
       statusEl.textContent = "ошибка";
-      dot.style.background = "var(--orange)";
-      dot.style.boxShadow = "0 0 16px rgba(255,153,0,.35)";
+      dot.style.background = "var(--yellow)";
+      dot.style.boxShadow = "0 0 14px rgba(255,212,0,.25)";
     }
   }
 
+  layoutSquares();
+  window.addEventListener('resize', () => {
+    layoutSquares();
+    tick();
+  });
+
   tick();
-  setInterval(tick, 2000);
+  setInterval(tick, 1000); // таймер лучше каждую секунду
 </script>
 </body>
 </html>`;
 }
 
-// Главная сразу показывает экран (чтобы на ТВ открывать просто домен)
+// Главная сразу экран
 app.get("/", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
 });
 
-// Алиас, если хочешь
+// алиас
 app.get("/screen", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
@@ -420,8 +501,9 @@ function getState(ctx) {
       step: "idle", // idle | entering_order | entering_time | selecting_items
       orderNo: "",
       prepMinutes: 25,
-      cart: {}, // { name: qty }
+      cart: {},      // { name: qty }
       cat: null,
+      orderId: null, // id заказа на экране (создаётся сразу после ввода времени)
     };
   }
   return ctx.session.state;
@@ -524,11 +606,17 @@ bot.start(async (ctx) => {
 bot.hears(BTN_NEW, async (ctx) => {
   if (await deny(ctx)) return;
   const st = getState(ctx);
+
+  // если предыдущий незавершённый заказ уже создали на экране — удалим, чтобы не засорять
+  if (st.orderId) deleteKitchenOrder(st.orderId);
+
   st.step = "entering_order";
   st.orderNo = "";
   st.prepMinutes = 25;
   st.cart = {};
   st.cat = null;
+  st.orderId = null;
+
   await ctx.reply("Введите номер заказа (например GF-254):", mainKeyboard());
 });
 
@@ -539,6 +627,9 @@ bot.on("text", async (ctx) => {
   if (txt === BTN_NEW) return;
 
   if (st.step === "entering_order") {
+    // если был старый незавершённый — удалим
+    if (st.orderId) deleteKitchenOrder(st.orderId);
+
     st.orderNo = txt;
     st.step = "entering_time";
     await ctx.reply("Введите время приготовления (минуты 1–240), например 20:", mainKeyboard());
@@ -551,8 +642,23 @@ bot.on("text", async (ctx) => {
       await ctx.reply("Введите число 1–240.", mainKeyboard());
       return;
     }
+
     st.prepMinutes = Math.floor(n);
+
+    // ✅ ВАЖНОЕ: СРАЗУ создаём заказ на экране, чтобы таймер пошёл немедленно
+    if (!st.orderNo.trim()) {
+      await ctx.reply("❌ Нет номера заказа. Нажми «Новый заказ».", mainKeyboard());
+      st.step = "idle";
+      return;
+    }
+    const id = addKitchenOrder({ orderNo: st.orderNo.trim(), prepMinutes: st.prepMinutes });
+    st.orderId = id;
+
     st.step = "selecting_items";
+    await ctx.reply(
+      `⏱ Таймер запущен на экране: ${PUBLIC_URL}/\nТеперь выбери блюда и нажми «Отправить на ТВ».`,
+      mainKeyboard()
+    );
     await showCategories(ctx);
     return;
   }
@@ -597,12 +703,19 @@ bot.action("clear", async (ctx) => {
 bot.action("edit", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
+
+  // если уже создали заказ на экране — удалим, потому что номер/время меняем
+  if (st.orderId) deleteKitchenOrder(st.orderId);
+
   st.step = "entering_order";
   st.orderNo = "";
   st.prepMinutes = 25;
   st.cart = {};
   st.cat = null;
+  st.orderId = null;
+
   await ctx.reply("Введите номер заказа заново:", mainKeyboard());
 });
 
@@ -647,16 +760,19 @@ bot.action("send", async (ctx) => {
   const st = getState(ctx);
   const items = Object.entries(st.cart).map(([name, qty]) => ({ name, qty }));
 
-  if (!st.orderNo.trim()) return ctx.reply("❌ Нет номера заказа.", mainKeyboard());
+  if (!st.orderId) {
+    return ctx.reply("❌ Сначала введи номер и время (таймер должен запуститься).", mainKeyboard());
+  }
   if (!items.length) return ctx.reply("❌ Корзина пустая.", mainKeyboard());
 
-  const orderNo = st.orderNo.trim();
-  const prepMinutes = st.prepMinutes;
-
-  addKitchenOrder({ orderNo, prepMinutes, items });
+  // ✅ Теперь просто ДОБАВЛЯЕМ блюда в уже созданный заказ (таймер не терял минуты)
+  const ok = updateKitchenOrderItems(st.orderId, items);
+  if (!ok) {
+    return ctx.reply("❌ Заказ на экране не найден (возможно перезапуск сервера). Создай заказ заново.", mainKeyboard());
+  }
 
   await ctx.reply(
-    `✅ Отправлено на ТВ\nЭкран: ${PUBLIC_URL}/\nAPI: ${PUBLIC_URL}/api/orders`,
+    `✅ Блюда отправлены на ТВ\nЭкран: ${PUBLIC_URL}/`,
     mainKeyboard()
   );
 
@@ -666,6 +782,7 @@ bot.action("send", async (ctx) => {
   st.prepMinutes = 25;
   st.cart = {};
   st.cat = null;
+  st.orderId = null;
 });
 
 // ==========================
