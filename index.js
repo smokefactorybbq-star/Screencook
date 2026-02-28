@@ -132,7 +132,7 @@ function screenHtml() {
       --ready:#aab2c2;
 
       /* SAFE AREA для ТВ (оверскан часто срезает края) */
-      --safe: 26px;
+      --safe: 40px;
     }
     *{ box-sizing:border-box; }
     html, body { height:100%; width:100%; }
