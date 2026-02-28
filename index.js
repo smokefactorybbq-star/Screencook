@@ -1,5 +1,6 @@
 import express from "express";
 import http from "http";
+import crypto from "crypto";
 import { Telegraf, Markup, session } from "telegraf";
 
 // ==========================
@@ -8,9 +9,6 @@ import { Telegraf, Markup, session } from "telegraf";
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
-
-const SECOND_PUSH_URL = process.env.SECOND_PUSH_URL;         // https://deploy2.../ingest
-const SECOND_PUSH_SECRET = process.env.SECOND_PUSH_SECRET;   // same as deploy2 INGEST_SECRET
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
 if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
@@ -34,7 +32,7 @@ const BTN_REMOVE_MODE = "➖ Убрать позицию";
 const BTN_BACK_CATS = "⬅️ Категории";
 
 // ==========================
-// MENU by categories (36+) — замени под себя
+// MENU by categories — замени под себя
 // ==========================
 const CATEGORIES = [
   { key: "soups", label: "🍲 Супы" },
@@ -84,30 +82,16 @@ function addKitchenOrder({ orderNo, prepMinutes, items }) {
   pruneOrders();
 }
 
-async function pushToSecondDeploy({ orderNo, prepMinutes }) {
-  if (!SECOND_PUSH_URL || !SECOND_PUSH_SECRET) return;
-  try {
-    await fetch(SECOND_PUSH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        secret: SECOND_PUSH_SECRET,
-        orderNo,
-        prepMinutes,
-      }),
-    });
-  } catch (e) {
-    console.error("PUSH TO DEPLOY2 ERROR:", e);
-  }
-}
-
 // ==========================
 // SERVER (DEPLOY #1)
 // ==========================
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/", (_req, res) => res.type("text/plain").send("DEPLOY #1 OK. API: /api/orders"));
+// Главная — не экран, а просто статус
+app.get("/", (_req, res) =>
+  res.type("text/plain").send("DEPLOY #1 OK. Orders API: /api/orders. Screen: /screen")
+);
 
 app.get("/api/orders", (_req, res) => {
   pruneOrders();
@@ -115,13 +99,31 @@ app.get("/api/orders", (_req, res) => {
   res.json(orders);
 });
 
-// (опционально) простая страница, если хочешь проверить визуально
+// Простая страница, чтобы визуально проверить (дальше ты можешь заменить на красивый экран)
 app.get("/screen", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.type("html").send(`<html><body style="font-family:system-ui">
-  <h2>DEPLOY #1 Screen test</h2>
-  <p>Open <a href="/api/orders">/api/orders</a></p>
-  </body></html>`);
+  res.type("html").send(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Kitchen Screen</title>
+</head>
+<body style="font-family:system-ui;margin:20px">
+  <h2>DEPLOY #1 Screen</h2>
+  <p>Данные берутся из <a href="/api/orders">/api/orders</a></p>
+  <pre id="out" style="background:#111;color:#0f0;padding:12px;border-radius:8px;white-space:pre-wrap"></pre>
+  <script>
+    async function tick(){
+      const r = await fetch('/api/orders', {cache:'no-store'});
+      const j = await r.json();
+      document.getElementById('out').textContent = JSON.stringify(j, null, 2);
+    }
+    tick();
+    setInterval(tick, 2000);
+  </script>
+</body>
+</html>`);
 });
 
 // ==========================
@@ -151,11 +153,11 @@ async function deny(ctx) {
 function getState(ctx) {
   if (!ctx.session.state) {
     ctx.session.state = {
-      step: "idle",           // idle | entering_order | entering_time | selecting_items
+      step: "idle", // idle | entering_order | entering_time | selecting_items
       orderNo: "",
       prepMinutes: 25,
-      cart: {},               // { name: qty }
-      cat: null,              // current category
+      cart: {}, // { name: qty }
+      cat: null,
     };
   }
   return ctx.session.state;
@@ -168,7 +170,6 @@ function mainKeyboard() {
 function cartSummary(cart) {
   const entries = Object.entries(cart);
   if (!entries.length) return "— пусто —";
-  // близко к названию
   return entries.map(([name, qty]) => `• ${name}    x${qty}`).join("\n");
 }
 
@@ -380,22 +381,19 @@ bot.action("send", async (ctx) => {
   if (await deny(ctx)) return;
 
   const st = getState(ctx);
-
   const items = Object.entries(st.cart).map(([name, qty]) => ({ name, qty }));
+
   if (!st.orderNo.trim()) return ctx.reply("❌ Нет номера заказа.", mainKeyboard());
   if (!items.length) return ctx.reply("❌ Корзина пустая.", mainKeyboard());
 
   const orderNo = st.orderNo.trim();
   const prepMinutes = st.prepMinutes;
 
-  // ✅ 1) сохранить для экрана #1 (номер + время + блюда + кол-во)
+  // ✅ сохранить для экрана #1 (номер + время + блюда + кол-во)
   addKitchenOrder({ orderNo, prepMinutes, items });
 
-  // ✅ 2) отправить во 2 деплой (только номер + время)
-  await pushToSecondDeploy({ orderNo, prepMinutes });
-
   await ctx.reply(
-    `✅ Отправлено на ТВ\n#1: ${PUBLIC_URL}/api/orders\n#2: отправлено в курьерский экран`,
+    `✅ Отправлено на ТВ\nЭкран: ${PUBLIC_URL}/screen\nAPI: ${PUBLIC_URL}/api/orders`,
     mainKeyboard()
   );
 
