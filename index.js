@@ -131,8 +131,12 @@ function screenHtml() {
       --red:#ff3b30;
       --ready:#aab2c2;
 
-      /* SAFE AREA для ТВ (оверскан часто срезает края) */
+      /* SAFE AREA для ТВ-оверскана (тут точно будет работать) */
       --safe: 40px;
+
+      --gap: 10px;
+      --cols: 5;
+      --rows: 4;
     }
     *{ box-sizing:border-box; }
     html, body { height:100%; width:100%; }
@@ -142,29 +146,21 @@ function screenHtml() {
       color:var(--text);
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
       overflow:hidden;
+
+      /* вот это гарантированно сдвигает контент внутрь */
+      padding: var(--safe);
     }
 
-    /* Контейнер с safe-area отступами */
-    .stage{
-      position:fixed;
-      left: max(var(--safe), env(safe-area-inset-left));
-      right: max(var(--safe), env(safe-area-inset-right));
-      top: max(var(--safe), env(safe-area-inset-top));
-      bottom: max(var(--safe), env(safe-area-inset-bottom));
-      overflow:hidden;
-    }
-
-    /* Сетка на весь stage */
     .grid{
-      height:100%;
-      width:100%;
+      width: 100%;
+      height: 100%;
       display:grid;
-      grid-template-columns: repeat(5, 1fr);
-      grid-template-rows: repeat(2, 1fr);
-      gap: 10px; /* небольшой зазор для читаемости */
+      grid-template-columns: repeat(var(--cols), 1fr);
+      grid-template-rows: repeat(var(--rows), 1fr);
+      gap: var(--gap);
     }
 
-    .cell{
+    .card{
       background:var(--cell);
       border:1px solid var(--border);
       border-radius:18px;
@@ -176,18 +172,18 @@ function screenHtml() {
       box-shadow:0 12px 30px rgba(0,0,0,.35);
     }
 
-    /* Верхняя полоса (≈10-12%): опускаем текст */
+    /* верхняя строка: номер слева, таймер справа */
     .top{
-      height:12%;
-      min-height:0;
+      /* вместо процентов — так стабильнее на разных высотах */
+      flex: 0 0 auto;
+      padding: .9em 1.05em .55em;
       border-bottom:1px solid rgba(255,255,255,.10);
-      padding: 10px 14px 6px; /* опустили вниз */
       display:flex;
       align-items:flex-end;
       justify-content:space-between;
-      gap:10px;
+      gap: 1em;
+      min-height: 0;
     }
-
     .orderNo, .remain{
       font-weight:1000;
       letter-spacing:.3px;
@@ -200,25 +196,23 @@ function screenHtml() {
     .orderNo{ flex: 1 1 auto; text-align:left; }
     .remain{ flex: 0 0 auto; text-align:right; }
 
-    /* 88% — блюда */
-    .itemsWrap{
-      flex:1 1 auto;
-      padding: 10px 12px 12px;
+    .items{
+      flex: 1 1 auto;
+      padding: 1em 1.1em 1.1em;
       overflow:hidden;
       display:flex;
       flex-direction:column;
-      gap: .45em;          /* ВАЖНО: в em -> уменьшается вместе со шрифтом */
+      gap: .45em; /* em -> уменьшается со шрифтом */
       min-height:0;
-      /* font-size будет подгоняться JS */
     }
 
     .item{
       display:flex;
       justify-content:space-between;
-      gap: .6em;           /* em */
-      padding: .55em .7em; /* em -> уменьшается при уменьшении шрифта */
+      gap: .6em;
+      padding: .55em .75em;
       border:1px solid rgba(255,255,255,.09);
-      border-radius: .9em; /* em */
+      border-radius: .9em;
       background:rgba(255,255,255,.03);
       min-width:0;
     }
@@ -226,15 +220,16 @@ function screenHtml() {
     .name{
       min-width:0;
       font-weight:950;
-      /* перенос на 2 строки */
       white-space:normal;
+
+      /* перенос до 2 строк */
       display:-webkit-box;
       -webkit-line-clamp:2;
       -webkit-box-orient:vertical;
-      line-height:1.12;
       overflow:hidden;
-    }
 
+      line-height:1.12;
+    }
     .qty{
       flex:0 0 auto;
       white-space:nowrap;
@@ -251,10 +246,10 @@ function screenHtml() {
       color:rgba(255,255,255,.35);
       font-weight:950;
       text-align:center;
-      padding:10px;
+      padding: 1em;
     }
 
-    .emptyCell{
+    .empty{
       height:100%;
       display:flex;
       align-items:center;
@@ -266,13 +261,13 @@ function screenHtml() {
   </style>
 </head>
 <body>
-  <div class="stage">
-    <div class="grid" id="grid"></div>
-  </div>
+  <div class="grid" id="grid"></div>
 
 <script>
   const grid = document.getElementById('grid');
-  const TOTAL = 10;
+  const COLS = 5;
+  const ROWS = 4;
+  const TOTAL_ORDERS = 10;
 
   function fmt2(n){ return String(n).padStart(2,'0'); }
   function mmss(ms){
@@ -283,7 +278,6 @@ function screenHtml() {
   }
   function esc(s){ return String(s||'').replace(/</g,'&lt;'); }
 
-  // Цвет таймера: 40–25 зелёный, 25–10 жёлтый, 10–0 красный
   function remainColor(remMin){
     if (remMin <= 0) return 'var(--ready)';
     if (remMin <= 10) return 'var(--red)';
@@ -302,43 +296,105 @@ function screenHtml() {
     }
   }
 
-  // Подгон шрифта для блюд: уменьшаем, пока scrollHeight не влезет
+  // Уменьшить шрифт списка блюд, пока он полностью не влезет
   function fitItems(container, maxPx, minPx){
     if (!container) return;
     let size = maxPx;
     container.style.fontSize = size + 'px';
     container.style.lineHeight = "1.10";
-
-    // важный цикл: уменьшаем, пока весь список не влезет
     while (size > minPx && container.scrollHeight > container.clientHeight){
       size -= 1;
       container.style.fontSize = size + 'px';
     }
   }
 
+  // Сколько "рядов" занимает карточка (1..3) по количеству позиций
+  function spanFor(itemsCount){
+    if (itemsCount >= 12) return 3;
+    if (itemsCount >= 6) return 2;
+    return 1;
+  }
+
+  // Простой укладчик по колонкам (bin packing в сетку COLS x ROWS)
+  function placeCards(cards){
+    // occupancy[r][c]
+    const occ = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+    const placed = [];
+
+    function canPlace(r, c, span){
+      if (r + span > ROWS) return false;
+      for (let rr = r; rr < r + span; rr++){
+        if (occ[rr][c]) return false;
+      }
+      return true;
+    }
+    function doPlace(r, c, span, card){
+      for (let rr = r; rr < r + span; rr++){
+        occ[rr][c] = true;
+      }
+      placed.push({ ...card, r, c, span });
+    }
+
+    for (const card of cards){
+      let span = card.span;
+
+      // если не помещается — уменьшаем
+      for (let trySpan = span; trySpan >= 1; trySpan--){
+        let done = false;
+        for (let r=0; r<ROWS; r++){
+          for (let c=0; c<COLS; c++){
+            if (canPlace(r,c,trySpan)){
+              doPlace(r,c,trySpan, card);
+              done = true;
+              break;
+            }
+          }
+          if (done) break;
+        }
+        if (done) break;
+      }
+    }
+
+    return placed;
+  }
+
   function render(orders){
     grid.innerHTML = "";
     const now = Date.now();
-    const list = Array.isArray(orders) ? orders.slice(0, 10) : [];
+    const list = Array.isArray(orders) ? orders.slice(0, TOTAL_ORDERS) : [];
 
-    for (let i=0; i<TOTAL; i++){
-      const o = list[i];
-      const cell = document.createElement('div');
-      cell.className = 'cell';
+    // подготовка карточек: считаем span
+    const cards = list.map(o => {
+      const items = Array.isArray(o.items) ? o.items : [];
+      return {
+        o,
+        itemsCount: items.length,
+        span: spanFor(items.length)
+      };
+    });
 
-      if (!o){
-        cell.innerHTML = '<div class="emptyCell">—</div>';
-        grid.appendChild(cell);
-        continue;
-      }
+    const placed = placeCards(cards);
 
+    // нарисуем 20 пустых клеток фоном не нужно — просто показываем карточки
+    // но если нет заказов — покажем 1 пустую
+    if (!placed.length){
+      const empty = document.createElement('div');
+      empty.className = 'card';
+      empty.style.gridColumn = '1 / span 5';
+      empty.style.gridRow = '1 / span 4';
+      empty.innerHTML = '<div class="empty">—</div>';
+      grid.appendChild(empty);
+      return;
+    }
+
+    for (const p of placed){
+      const o = p.o;
       const remMs = (o.endsAt || 0) - now;
       const remMin = remMs / 60000;
       const color = remainColor(remMin);
       const timerText = (remMs <= 0) ? 'READY' : mmss(remMs);
 
       const items = Array.isArray(o.items) ? o.items : [];
-
       let itemsHtml = '';
       if (items.length){
         itemsHtml = items.map(it => {
@@ -350,22 +406,30 @@ function screenHtml() {
         itemsHtml = '<div class="placeholder">Выбор блюд…</div>';
       }
 
-      cell.innerHTML = \`
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.gridColumn = (p.c + 1) + ' / span 1';
+      card.style.gridRow = (p.r + 1) + ' / span ' + p.span;
+
+      card.innerHTML = \`
         <div class="top">
           <div class="orderNo" data-fit="order">\${esc(o.orderNo || '—')}</div>
           <div class="remain" data-fit="remain" style="color:\${color}">\${timerText}</div>
         </div>
-        <div class="itemsWrap" data-fit="items">\${itemsHtml}</div>
+        <div class="items" data-fit="items">\${itemsHtml}</div>
       \`;
 
-      grid.appendChild(cell);
+      grid.appendChild(card);
     }
 
-    // ⚠️ Фитим после того как браузер реально рассчитал размеры
+    // Подгон шрифтов после layout
     requestAnimationFrame(() => {
-      grid.querySelectorAll('[data-fit="order"]').forEach(el => fitText(el, 34, 10));
-      grid.querySelectorAll('[data-fit="remain"]').forEach(el => fitText(el, 30, 10));
-      grid.querySelectorAll('[data-fit="items"]').forEach(box => fitItems(box, 22, 8));
+      grid.querySelectorAll('[data-fit="order"]').forEach(el => fitText(el, 36, 10));
+      grid.querySelectorAll('[data-fit="remain"]').forEach(el => fitText(el, 32, 10));
+      grid.querySelectorAll('[data-fit="items"]').forEach(box => {
+        // по умолчанию достаточно крупно, но будет уменьшаться пока всё не влезет
+        fitItems(box, 22, 8);
+      });
     });
   }
 
@@ -551,7 +615,6 @@ bot.on("text", async (ctx) => {
 
   if (st.step === "entering_order") {
     if (st.orderId) deleteKitchenOrder(st.orderId);
-
     st.orderNo = txt;
     st.step = "entering_time";
     await ctx.reply("Введите время приготовления (минуты 1–240), например 20:", mainKeyboard());
