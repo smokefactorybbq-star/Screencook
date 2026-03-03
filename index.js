@@ -44,16 +44,13 @@ const CATEGORIES = [
   { key: "mains", label: "🍛 Основные блюда" },
   { key: "sides", label: "🍟 Дополнительные блюда" },
   { key: "grill", label: "🔥 Гриль" },
+  { key: "gastronomy", label: "🔥 Гастрономия" },
   { key: "salads", label: "🥗 Салаты" },
 ];
 
 const MENU_BY_CAT = {
-  soups: [
-    "Кур бульон S1",
-    "Борщ S2",
-    "Гороховый суп S3",
-    "Солянка S4",
-  ],
+  soups: ["Кур бульон S1", "Борщ S2", "Гороховый суп S3", "Солянка S4"],
+  gastronomy: ["Ребро варкоп", "Джерки"],
   mains: [
     "Пельмени M1",
     "Зраза M2",
@@ -79,7 +76,6 @@ const MENU_BY_CAT = {
     "Куриный рулет M22",
     "Говяжий рулет M23",
     "Бараний рулет M24",
-    
   ],
   sides: [
     "Пелюстка",
@@ -93,14 +89,24 @@ const MENU_BY_CAT = {
     "Свежий огурец",
     "Майонез",
   ],
-  grill: ["Рёбра BBQ G1", "Шашлык свиной G2", "Шашлык куриный G3", "Кебаб свин-гов G4", "Кебаб курица G5"],
-  salads: ["Столичный T1", "Деревенский T2", "Обжорка T3", "Цезарь T4", "Баклажаны T5",],
+  grill: [
+    "Рёбра BBQ G1",
+    "Шашлык свиной G2",
+    "Шашлык куриный G3",
+    "Кебаб свин-гов G4",
+    "Кебаб курица G5",
+  ],
+  salads: ["Столичный T1", "Деревенский T2", "Обжорка T3", "Цезарь T4", "Баклажаны T5"],
 };
 
 // ==========================
 // ORDERS memory
 // ==========================
-let orders = []; // [{ id, orderNo, prepMinutes, createdAt, endsAt, expiresAt, items:[{name,qty}] }]
+// [{ id, orderNo, prepMinutes, createdAt, endsAt, expiresAt, cutlery, items:[{name,qty}] }]
+// cutlery: true => Cutlery required (green)
+//          false => Dont need cutlery (red)
+//          null/undefined => not answered yet (no line)
+let orders = [];
 
 function pruneOrders() {
   const now = Date.now();
@@ -121,6 +127,7 @@ function addKitchenOrder(orderNo, prepMinutes) {
     createdAt,
     endsAt,
     expiresAt,
+    cutlery: null, // 👈 NEW
     items: [],
   };
   orders.unshift(o);
@@ -132,6 +139,15 @@ function updateKitchenOrderItems(orderId, items) {
   const idx = orders.findIndex((o) => o.id === orderId);
   if (idx === -1) return false;
   orders[idx].items = Array.isArray(items) ? items : [];
+  pruneOrders();
+  return true;
+}
+
+// 👇 NEW
+function updateKitchenOrderCutlery(orderId, cutlery) {
+  const idx = orders.findIndex((o) => o.id === orderId);
+  if (idx === -1) return false;
+  orders[idx].cutlery = !!cutlery;
   pruneOrders();
   return true;
 }
@@ -269,6 +285,20 @@ function screenHtml() {
       letter-spacing: 0.5px;
     }
 
+    /* 👇 NEW cutlery line */
+    .cutlery{
+      flex:0 0 auto;
+      padding: 8px 16px 0;
+      font-weight: 1000;
+      font-size: 14px;
+      letter-spacing: .2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cutlery.green{ color: var(--green); }
+    .cutlery.red{ color: var(--red); }
+
     .items{
       flex:1 1 auto;
       padding: 10px 12px 12px;
@@ -401,6 +431,15 @@ function screenHtml() {
     return "var(--green)";
   }
 
+  function cutleryHtml(o){
+    // true => green line, false => red line, null/undefined => no line
+    if (!o || (o.cutlery !== true && o.cutlery !== false)) return "";
+    if (o.cutlery === true){
+      return '<div class="cutlery green">Cutlery required</div>';
+    }
+    return '<div class="cutlery red">Dont need cutlery</div>';
+  }
+
   function makeCard(o){
     var card = document.createElement("div");
     card.className = "card";
@@ -435,6 +474,7 @@ function screenHtml() {
         '<div class="orderNo">'+esc(o.orderNo || "—")+'</div>'+
         '<div class="remain" data-endsat="'+(o.endsAt||0)+'">--:--</div>'+
       '</div>'+
+      cutleryHtml(o) +  // 👈 NEW line under top
       '<div class="items">'+itemsHtml+'</div>';
 
     return card;
@@ -516,6 +556,7 @@ function screenHtml() {
           id: o.id,
           orderNo: o.orderNo,
           endsAt: o.endsAt,
+          cutlery: o.cutlery, // 👈 NEW
           items: (o.items||[]).slice(0, MAX_ITEMS).map(function(it){ return [it.name, it.qty]; }),
           itemsLen: (o.items||[]).length
         };
@@ -596,6 +637,7 @@ function getState(ctx) {
       cart: {},
       cat: null,
       orderId: null,
+      cutlery: null, // 👈 NEW
     };
   }
   return ctx.session.state;
@@ -644,19 +686,32 @@ function dishesKeyboard(catKey) {
   return Markup.inlineKeyboard(rows);
 }
 
+// 👇 NEW: cutlery question keyboard
+function cutleryKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("✅ Да", "cutlery:yes"), Markup.button.callback("❌ Нет", "cutlery:no")],
+  ]);
+}
+
 async function showCategories(ctx) {
   const st = getState(ctx);
   const text =
     "🧾 Создание заказа\n\n" +
     "Номер: " + (st.orderNo || "—") + "\n" +
-    "Время: " + st.prepMinutes + " мин\n\n" +
+    "Время: " + st.prepMinutes + " мин\n" +
+    "Приборы: " +
+    (st.cutlery === true ? "Да" : st.cutlery === false ? "Нет" : "—") +
+    "\n\n" +
     "Корзина:\n" +
     cartSummary(st.cart) +
     "\n\nВыбери категорию:";
 
   if (ctx.updateType === "callback_query") {
-    try { await ctx.editMessageText(text, categoriesKeyboard()); }
-    catch { await ctx.reply(text, categoriesKeyboard()); }
+    try {
+      await ctx.editMessageText(text, categoriesKeyboard());
+    } catch {
+      await ctx.reply(text, categoriesKeyboard());
+    }
   } else {
     await ctx.reply(text, categoriesKeyboard());
   }
@@ -665,21 +720,44 @@ async function showCategories(ctx) {
 async function showDishes(ctx, catKey) {
   const st = getState(ctx);
   st.cat = catKey;
-  const catLabel = (CATEGORIES.find((c) => c.key === catKey)?.label) || catKey;
+  const catLabel = CATEGORIES.find((c) => c.key === catKey)?.label || catKey;
 
   const text =
     "📂 " + catLabel + "\n\n" +
-    "Номер: " + (st.orderNo || "—") + " | Время: " + st.prepMinutes + " мин\n\n" +
+    "Номер: " + (st.orderNo || "—") + " | Время: " + st.prepMinutes + " мин\n" +
+    "Приборы: " + (st.cutlery === true ? "Да" : st.cutlery === false ? "Нет" : "—") + "\n\n" +
     "Корзина:\n" +
     cartSummary(st.cart) +
     "\n\nНажимай блюда (➕):";
 
   if (ctx.updateType === "callback_query") {
-    try { await ctx.editMessageText(text, dishesKeyboard(catKey)); }
-    catch { await ctx.reply(text, dishesKeyboard(catKey)); }
+    try {
+      await ctx.editMessageText(text, dishesKeyboard(catKey));
+    } catch {
+      await ctx.reply(text, dishesKeyboard(catKey));
+    }
   } else {
     await ctx.reply(text, dishesKeyboard(catKey));
   }
+}
+
+async function askCutlery(ctx) {
+  await ctx.reply("Нужны столовые приборы? (да/нет)", cutleryKeyboard());
+}
+
+// text -> boolean
+function parseYesNo(txt) {
+  const t = String(txt || "").trim().toLowerCase();
+  const yes = ["да", "y", "yes", "1", "true", "угу", "нужны", "need", "ok", "✅"];
+  const no = ["нет", "n", "no", "0", "false", "не", "не нужны", "dont", "don't", "❌"];
+  if (yes.includes(t)) return true;
+  if (no.includes(t)) return false;
+  // also accept startswith
+  if (t.startsWith("да")) return true;
+  if (t.startsWith("нет")) return false;
+  if (t.startsWith("yes")) return true;
+  if (t.startsWith("no")) return false;
+  return null;
 }
 
 bot.start(async (ctx) => {
@@ -701,6 +779,7 @@ bot.hears(BTN_NEW, async (ctx) => {
   st.cart = {};
   st.cat = null;
   st.orderId = null;
+  st.cutlery = null;
 
   await ctx.reply("Введите номер заказа (например GF-254):", mainKeyboard());
 });
@@ -734,11 +813,40 @@ bot.on("text", async (ctx) => {
       return;
     }
 
-    // ✅ стартуем таймер сразу (пока выбирают блюда)
+    // ✅ стартуем таймер сразу (пока выбирают блюда/приборы)
     st.orderId = addKitchenOrder(st.orderNo.trim(), st.prepMinutes);
 
-    st.step = "selecting_items";
+    // 👇 NEW: спросить про приборы
+    st.step = "entering_cutlery";
     await ctx.reply("⏱ Таймер уже идет на ТВ: " + PUBLIC_URL + "/screen", mainKeyboard());
+    await askCutlery(ctx);
+    return;
+  }
+
+  // 👇 NEW: accept typed yes/no
+  if (st.step === "entering_cutlery") {
+    if (!st.orderId) {
+      await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+      st.step = "idle";
+      return;
+    }
+
+    const val = parseYesNo(txt);
+    if (val === null) {
+      await ctx.reply("Ответь «да» или «нет».", mainKeyboard());
+      await askCutlery(ctx);
+      return;
+    }
+
+    st.cutlery = val;
+    const ok = updateKitchenOrderCutlery(st.orderId, val);
+    if (!ok) {
+      await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+      st.step = "idle";
+      return;
+    }
+
+    st.step = "selecting_items";
     await showCategories(ctx);
     return;
   }
@@ -791,6 +899,7 @@ bot.action("edit", async (ctx) => {
   st.cart = {};
   st.cat = null;
   st.orderId = null;
+  st.cutlery = null;
 
   await ctx.reply("Введите номер заказа заново:", mainKeyboard());
 });
@@ -803,9 +912,7 @@ bot.action("remove_mode", async (ctx) => {
   const keys = Object.keys(st.cart);
   if (!keys.length) return ctx.reply("Корзина пустая.", mainKeyboard());
 
-  const rows = keys.map((k) => [
-    Markup.button.callback("➖ " + k + " (x" + st.cart[k] + ")", "rem:" + k),
-  ]);
+  const rows = keys.map((k) => [Markup.button.callback("➖ " + k + " (x" + st.cart[k] + ")", "rem:" + k)]);
   rows.push([Markup.button.callback("⬅️ Назад", st.cat ? "back_to_dishes" : "cats")]);
   await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
 });
@@ -829,11 +936,71 @@ bot.action(/rem:(.+)/, async (ctx) => {
   await ctx.reply("Ок: " + name, mainKeyboard());
 });
 
+// 👇 NEW: cutlery callbacks
+bot.action("cutlery:yes", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  if (st.step !== "entering_cutlery") {
+    await ctx.reply("Ок.", mainKeyboard());
+    return;
+  }
+  if (!st.orderId) {
+    await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    st.step = "idle";
+    return;
+  }
+
+  st.cutlery = true;
+  const ok = updateKitchenOrderCutlery(st.orderId, true);
+  if (!ok) {
+    await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    st.step = "idle";
+    return;
+  }
+
+  st.step = "selecting_items";
+  await showCategories(ctx);
+});
+
+bot.action("cutlery:no", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  if (st.step !== "entering_cutlery") {
+    await ctx.reply("Ок.", mainKeyboard());
+    return;
+  }
+  if (!st.orderId) {
+    await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    st.step = "idle";
+    return;
+  }
+
+  st.cutlery = false;
+  const ok = updateKitchenOrderCutlery(st.orderId, false);
+  if (!ok) {
+    await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    st.step = "idle";
+    return;
+  }
+
+  st.step = "selecting_items";
+  await showCategories(ctx);
+});
+
 bot.action("send", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
 
   const st = getState(ctx);
+
+  if (st.step === "entering_cutlery") {
+    return ctx.reply("❌ Сначала ответь про приборы (да/нет).", mainKeyboard());
+  }
+
   const items = Object.entries(st.cart).map(([name, qty]) => ({ name, qty }));
 
   if (!st.orderId) return ctx.reply("❌ Сначала введи номер и время.", mainKeyboard());
@@ -841,10 +1008,7 @@ bot.action("send", async (ctx) => {
 
   const ok = updateKitchenOrderItems(st.orderId, items);
   if (!ok) {
-    return ctx.reply(
-      "❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.",
-      mainKeyboard()
-    );
+    return ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
   }
 
   await ctx.reply("✅ Блюда появились на ТВ", mainKeyboard());
@@ -855,6 +1019,7 @@ bot.action("send", async (ctx) => {
   st.cart = {};
   st.cat = null;
   st.orderId = null;
+  st.cutlery = null;
 });
 
 // ==========================
