@@ -288,7 +288,7 @@ function screenHtml() {
     /* 👇 NEW cutlery line */
     .cutlery{
       flex:0 0 auto;
-      padding: 8px 16px 0;
+      padding: 2px 16px 0;
       font-weight: 1000;
       font-size: 14px;
       letter-spacing: .2px;
