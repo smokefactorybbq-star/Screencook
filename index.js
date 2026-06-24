@@ -1,4 +1,4 @@
-// index.js — TV SAFE (old WebView compatible)
+// index.js — TV SAFE + Manual orders + Screenshot OCR orders
 // Screen:  /   (or /screen)
 // API:     /api/orders   (JSON)
 // Webhook: /tg/<WEBHOOK_SECRET>
@@ -7,6 +7,7 @@ import express from "express";
 import http from "http";
 import crypto from "crypto";
 import { Telegraf, Markup, session } from "telegraf";
+import OpenAI from "openai";
 
 // ==========================
 // ENV
@@ -14,10 +15,15 @@ import { Telegraf, Markup, session } from "telegraf";
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
 if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
 if (!WEBHOOK_SECRET) throw new Error("WEBHOOK_SECRET is not set");
+
+const openai = OPENAI_API_KEY
+  ? new OpenAI({ apiKey: OPENAI_API_KEY })
+  : null;
 
 const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .split(",")
@@ -25,17 +31,24 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter(Boolean)
   .map(Number)
   .filter((n) => Number.isFinite(n));
-
 // ==========================
 // BOT UI
 // ==========================
 const BTN_NEW = "🧾 Новый заказ";
+const BTN_NEW_SCREENSHOT = "📸 Новый заказ screenshot";
+
 const BTN_SEND = "✅ Отправить на ТВ";
 const BTN_CLEAR = "🧹 Очистить";
 const BTN_EDIT = "✏️ Изменить №/время";
 const BTN_REMOVE_MODE = "➖ Убрать позицию";
 const BTN_BACK_CATS = "⬅️ Категории";
 
+const BTN_OCR_READ = "✅ Читать скриншоты";
+const BTN_OCR_CONFIRM = "✅ Подтвердить";
+const BTN_OCR_DELETE = "❌ Удалить заказ";
+const BTN_OCR_SEND_TV = "✅ Отправить на ТВ";
+const BTN_OCR_ADD_ITEM = "➕ Добавить блюдо";
+const BTN_OCR_BACK = "⬅️ Назад к заказу";
 // ==========================
 // MENU
 // ==========================
@@ -50,7 +63,9 @@ const CATEGORIES = [
 
 const MENU_BY_CAT = {
   soups: ["Кур бульон S1", "Борщ S2", "Гороховый суп S3", "Солянка S4"],
+
   gastronomy: ["Ребро варкоп", "Джерки"],
+
   mains: [
     "Пельмени M1",
     "Зраза M2",
@@ -77,6 +92,7 @@ const MENU_BY_CAT = {
     "Говяжий рулет M23",
     "Бараний рулет M24",
   ],
+
   sides: [
     "Пелюстка",
     "Соленое сало",
@@ -90,6 +106,7 @@ const MENU_BY_CAT = {
     "Свежий огурец",
     "Майонез",
   ],
+
   grill: [
     "Рёбра BBQ G1",
     "Шашлык свиной G2",
@@ -97,20 +114,30 @@ const MENU_BY_CAT = {
     "Кебаб свин-гов G4",
     "Кебаб курица G5",
   ],
-  salads: ["Столичный T1", "Деревенский T2", "Обжорка T3", "Цезарь T4", "Овощ Смет T6", "Овощ Майо T7", "Овощ Масло T8","Баклажаны T5"],
-};
 
+  salads: [
+    "Столичный T1",
+    "Деревенский T2",
+    "Обжорка T3",
+    "Цезарь T4",
+    "Овощ Смет T6",
+    "Овощ Майо T7",
+    "Овощ Масло T8",
+    "Баклажаны T5",
+  ],
+};
 // ==========================
 // ORDERS memory
 // ==========================
 // [{ id, orderNo, prepMinutes, createdAt, endsAt, expiresAt, cutlery, items:[{name,qty}] }]
-// cutlery: true => Cutlery required (green)
-//          false => Dont need cutlery (red)
-//          null/undefined => not answered yet (no line)
+// cutlery: true  => Cutlery required
+// cutlery: false => Dont need cutlery
+// cutlery: null  => not answered
 let orders = [];
 
 function pruneOrders() {
   const now = Date.now();
+
   orders = orders.filter((o) => o.expiresAt > now);
   orders.sort((a, b) => b.createdAt - a.createdAt);
   orders = orders.slice(0, 10);
@@ -121,61 +148,64 @@ function addKitchenOrder(orderNo, prepMinutes) {
   const endsAt = createdAt + prepMinutes * 60_000;
   const expiresAt = endsAt + 5 * 60_000;
 
-  const o = {
+  const order = {
     id: crypto.randomUUID(),
     orderNo,
     prepMinutes,
     createdAt,
     endsAt,
     expiresAt,
-    cutlery: null, // 👈 NEW
+    cutlery: null,
     items: [],
   };
-  orders.unshift(o);
+
+  orders.unshift(order);
   pruneOrders();
-  return o.id;
+
+  return order.id;
 }
 
 function updateKitchenOrderItems(orderId, items) {
   const idx = orders.findIndex((o) => o.id === orderId);
   if (idx === -1) return false;
+
   orders[idx].items = Array.isArray(items) ? items : [];
   pruneOrders();
+
   return true;
 }
 
-// 👇 NEW
 function updateKitchenOrderCutlery(orderId, cutlery) {
   const idx = orders.findIndex((o) => o.id === orderId);
   if (idx === -1) return false;
+
   orders[idx].cutlery = !!cutlery;
   pruneOrders();
+
   return true;
 }
 
 function deleteKitchenOrder(orderId) {
   if (!orderId) return;
+
   orders = orders.filter((o) => o.id !== orderId);
   pruneOrders();
 }
-
 // ==========================
 // SERVER
 // ==========================
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+
+app.use(express.json({ limit: "5mb" }));
 
 app.get("/api/orders", (_req, res) => {
   pruneOrders();
+
   res.setHeader("Cache-Control", "no-store");
   res.json(orders);
 });
-
 // ==========================
-// SCREEN HTML (10 windows fixed, up to 15 items visible)
-// - orderNo/time font unchanged
-// - items font tuned to fit 15 rows
-// - no auto-fit loops => no font jumping
+// SCREEN HTML
 // ==========================
 function screenHtml() {
   return `<!doctype html>
@@ -196,12 +226,9 @@ function screenHtml() {
       --red:#ff3b30;
       --ready:#aab2c2;
 
-      /* anti-overscan */
       --safe: 40px;
-
       --gap: 10px;
 
-      /* Items style tuned for up to 15 rows */
       --item-font: 14px;
       --item-line: 1.05;
       --item-pad-v: 4px;
@@ -211,7 +238,13 @@ function screenHtml() {
     }
 
     *{ box-sizing:border-box; }
-    html,body{ width:100%; height:100%; margin:0; }
+
+    html,body{
+      width:100%;
+      height:100%;
+      margin:0;
+    }
+
     body{
       background:var(--bg);
       color:var(--text);
@@ -228,7 +261,6 @@ function screenHtml() {
       overflow:hidden;
     }
 
-    /* 10 карточек: 5 в ряд, 2 ряда */
     .wrap{
       width:100%;
       height:100%;
@@ -264,7 +296,6 @@ function screenHtml() {
       min-height:0;
     }
 
-    /* ШРИФТ НОМЕРА/ВРЕМЕНИ ОСТАВЛЯЕМ */
     .orderNo{
       flex:1 1 auto;
       min-width:0;
@@ -275,18 +306,17 @@ function screenHtml() {
       text-overflow:ellipsis;
       font-size: clamp(16px, 1.25vw, 34px);
     }
+
     .remain{
       flex:0 0 auto;
       font-weight:1000;
       line-height:1;
       white-space:nowrap;
       font-size: clamp(16px, 1.15vw, 32px);
-
       font-variant-numeric: tabular-nums;
       letter-spacing: 0.5px;
     }
 
-    /* 👇 NEW cutlery line */
     .cutlery{
       flex:0 0 auto;
       padding: 2px 16px 0;
@@ -297,13 +327,14 @@ function screenHtml() {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+
     .cutlery.green{ color: var(--green); }
     .cutlery.red{ color: var(--red); }
 
     .items{
       flex:1 1 auto;
       padding: 10px 12px 12px;
-      overflow:hidden; /* фикс 10 окон, режем по 15 строк */
+      overflow:hidden;
       min-height:0;
       display:flex;
       flex-direction:column;
@@ -321,7 +352,6 @@ function screenHtml() {
       min-width:0;
     }
 
-    /* ОДНА СТРОКА => до 15 позиций */
     .name{
       flex:1 1 auto;
       min-width:0;
@@ -332,6 +362,7 @@ function screenHtml() {
       text-overflow:ellipsis;
       font-size: var(--item-font);
     }
+
     .qty{
       flex:0 0 auto;
       font-weight:1000;
@@ -371,6 +402,7 @@ function screenHtml() {
     .blink{
       animation: blink 0.9s steps(2,end) infinite;
     }
+
     @keyframes blink{
       0%{ filter:brightness(1); }
       50%{ filter:brightness(1.6); }
@@ -399,7 +431,6 @@ function screenHtml() {
     <div class="wrap" id="wrap"></div>
   </div>
   <div class="dbg" id="dbg">BOOT</div>
-
 <script>
 (function(){
   var wrap = document.getElementById('wrap');
@@ -415,16 +446,19 @@ function screenHtml() {
     s = String(s || "");
     return s.replace(/</g,"&lt;");
   }
+
   function pad2(n){
     n = String(n);
-    return (n.length<2) ? ("0"+n) : n;
+    return (n.length < 2) ? ("0" + n) : n;
   }
+
   function mmss(ms){
-    var s = Math.max(0, Math.floor(ms/1000));
-    var m = Math.floor(s/60);
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var m = Math.floor(s / 60);
     var ss = s % 60;
     return String(m) + ":" + pad2(ss);
   }
+
   function remainColor(remMin){
     if (remMin <= 0) return "var(--ready)";
     if (remMin <= 10) return "var(--red)";
@@ -433,11 +467,12 @@ function screenHtml() {
   }
 
   function cutleryHtml(o){
-    // true => green line, false => red line, null/undefined => no line
     if (!o || (o.cutlery !== true && o.cutlery !== false)) return "";
+
     if (o.cutlery === true){
       return '<div class="cutlery green">Cutlery required</div>';
     }
+
     return '<div class="cutlery red">Dont need cutlery</div>';
   }
 
@@ -451,17 +486,25 @@ function screenHtml() {
     }
 
     var items = (o.items && o.items.length) ? o.items : null;
-
     var itemsHtml = "";
+
     if (items){
       var shown = 0;
-      for (var i=0; i<items.length && shown < MAX_ITEMS; i++){
+
+      for (var i = 0; i < items.length && shown < MAX_ITEMS; i++){
         var it = items[i] || {};
         var name = esc(it.name);
         var qty = Number(it.qty || 0);
-        itemsHtml += '<div class="item"><div class="name">'+name+'</div><div class="qty">x'+qty+'</div></div>';
+
+        itemsHtml +=
+          '<div class="item">' +
+            '<div class="name">' + name + '</div>' +
+            '<div class="qty">x' + qty + '</div>' +
+          '</div>';
+
         shown++;
       }
+
       if (items.length > MAX_ITEMS){
         var rest = items.length - MAX_ITEMS;
         itemsHtml += '<div class="more">+ ещё ' + rest + ' поз.</div>';
@@ -471,22 +514,24 @@ function screenHtml() {
     }
 
     card.innerHTML =
-      '<div class="top">'+
-        '<div class="orderNo">'+esc(o.orderNo || "—")+'</div>'+
-        '<div class="remain" data-endsat="'+(o.endsAt||0)+'">--:--</div>'+
-      '</div>'+
-      cutleryHtml(o) +  // 👈 NEW line under top
-      '<div class="items">'+itemsHtml+'</div>';
+      '<div class="top">' +
+        '<div class="orderNo">' + esc(o.orderNo || "—") + '</div>' +
+        '<div class="remain" data-endsat="' + (o.endsAt || 0) + '">--:--</div>' +
+      '</div>' +
+      cutleryHtml(o) +
+      '<div class="items">' + itemsHtml + '</div>';
 
     return card;
   }
 
   function render(list){
     wrap.innerHTML = "";
-    for (var i=0;i<TOTAL;i++){
+
+    for (var i = 0; i < TOTAL; i++){
       var o = (list && list[i]) ? list[i] : null;
       wrap.appendChild(makeCard(o));
     }
+
     hasRenderedOnce = true;
     updateTimers();
   }
@@ -496,9 +541,11 @@ function screenHtml() {
 
     var now = Date.now();
     var nodes = wrap.querySelectorAll(".remain");
-    for (var i=0;i<nodes.length;i++){
+
+    for (var i = 0; i < nodes.length; i++){
       var el = nodes[i];
       var endsAt = Number(el.getAttribute("data-endsat") || 0);
+
       if (!endsAt){
         el.textContent = "--:--";
         el.style.color = "rgba(255,255,255,.35)";
@@ -512,12 +559,17 @@ function screenHtml() {
       el.textContent = (remMs <= 0) ? "READY" : mmss(remMs);
       el.style.color = color;
 
-      // blink если < 5 минут
       var card = el;
-      while (card && (!card.className || card.className.indexOf("card") === -1)) card = card.parentNode;
+
+      while (card && (!card.className || card.className.indexOf("card") === -1)) {
+        card = card.parentNode;
+      }
+
       if (card){
-        if (remMs > 0 && remMs <= 5*60*1000){
-          if (card.className.indexOf("blink") === -1) card.className = "card blink";
+        if (remMs > 0 && remMs <= 5 * 60 * 1000){
+          if (card.className.indexOf("blink") === -1) {
+            card.className = "card blink";
+          }
         } else {
           card.className = "card";
         }
@@ -529,6 +581,7 @@ function screenHtml() {
     try{
       var x = new XMLHttpRequest();
       x.open("GET", url, true);
+
       x.onreadystatechange = function(){
         if (x.readyState === 4){
           if (x.status >= 200 && x.status < 300){
@@ -539,10 +592,11 @@ function screenHtml() {
               cb(new Error("JSON parse error"));
             }
           } else {
-            cb(new Error("HTTP "+x.status));
+            cb(new Error("HTTP " + x.status));
           }
         }
       };
+
       x.send(null);
     }catch(e){
       cb(e);
@@ -551,17 +605,21 @@ function screenHtml() {
 
   function signature(list){
     try{
-      var slim = (list||[]).slice(0, TOTAL).map(function(o){
+      var slim = (list || []).slice(0, TOTAL).map(function(o){
         if (!o) return null;
+
         return {
           id: o.id,
           orderNo: o.orderNo,
           endsAt: o.endsAt,
-          cutlery: o.cutlery, // 👈 NEW
-          items: (o.items||[]).slice(0, MAX_ITEMS).map(function(it){ return [it.name, it.qty]; }),
-          itemsLen: (o.items||[]).length
+          cutlery: o.cutlery,
+          items: (o.items || []).slice(0, MAX_ITEMS).map(function(it){
+            return [it.name, it.qty];
+          }),
+          itemsLen: (o.items || []).length
         };
       });
+
       return JSON.stringify(slim);
     }catch(e){
       return String(Date.now());
@@ -595,22 +653,26 @@ function screenHtml() {
 </body>
 </html>`;
 }
-
 app.get("/", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
 });
+
 app.get("/screen", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
 });
-
 // ==========================
 // BOT
 // ==========================
 const bot = new Telegraf(BOT_TOKEN);
-bot.catch((err) => console.error("BOT ERROR:", err));
+
+bot.catch((err) => {
+  console.error("BOT ERROR:", err);
+});
+
 bot.use(session());
+
 bot.use((ctx, next) => {
   if (!ctx.session) ctx.session = {};
   return next();
@@ -618,53 +680,106 @@ bot.use((ctx, next) => {
 
 function isAllowed(ctx) {
   if (!MANAGER_IDS.length) return true;
+
   const id = ctx.from && ctx.from.id;
   return !!id && MANAGER_IDS.includes(id);
 }
+
 async function deny(ctx) {
   if (!isAllowed(ctx)) {
     await ctx.reply("⛔️ Нет доступа.");
     return true;
   }
+
   return false;
 }
-
 function getState(ctx) {
   if (!ctx.session.state) {
     ctx.session.state = {
       step: "idle",
+
+      // common
       orderNo: "",
       prepMinutes: 25,
       cart: {},
       cat: null,
       orderId: null,
-      cutlery: null, // 👈 NEW
+      cutlery: null,
+
+      // screenshot mode
+      screenshotPhotos: [],
+      screenshotMode: false,
     };
   }
+
   return ctx.session.state;
 }
 
+function resetState(st) {
+  if (st.orderId) deleteKitchenOrder(st.orderId);
+
+  st.step = "idle";
+  st.orderNo = "";
+  st.prepMinutes = 25;
+  st.cart = {};
+  st.cat = null;
+  st.orderId = null;
+  st.cutlery = null;
+
+  st.screenshotPhotos = [];
+  st.screenshotMode = false;
+}
+
 function mainKeyboard() {
-  return Markup.keyboard([[BTN_NEW]]).resize().oneTime(false);
+  return Markup.keyboard([
+    [BTN_NEW],
+    [BTN_NEW_SCREENSHOT],
+  ])
+    .resize()
+    .oneTime(false);
 }
 
 function cartSummary(cart) {
-  const entries = Object.entries(cart);
+  const entries = Object.entries(cart || {});
+
   if (!entries.length) return "— пусто —";
-  return entries.map(([name, qty]) => "• " + name + "    x" + qty).join("\n");
+
+  return entries
+    .map(([name, qty]) => "• " + name + "    x" + qty)
+    .join("\n");
+}
+
+function cartToItems(cart) {
+  return Object.entries(cart || {}).map(([name, qty]) => ({
+    name,
+    qty,
+  }));
 }
 
 function categoriesKeyboard() {
   const rows = [];
+
   for (let i = 0; i < CATEGORIES.length; i += 2) {
     const a = CATEGORIES[i];
     const b = CATEGORIES[i + 1];
+
     const row = [Markup.button.callback(a.label, "cat:" + a.key)];
+
     if (b) row.push(Markup.button.callback(b.label, "cat:" + b.key));
+
     rows.push(row);
   }
-  rows.push([Markup.button.callback(BTN_CLEAR, "clear"), Markup.button.callback(BTN_SEND, "send")]);
-  rows.push([Markup.button.callback(BTN_EDIT, "edit"), Markup.button.callback(BTN_REMOVE_MODE, "remove_mode")]);
+
+  rows.push([
+    Markup.button.callback(BTN_CLEAR, "clear"),
+    Markup.button.callback(BTN_SEND, "send"),
+  ]);
+
+  rows.push([
+    Markup.button.callback(BTN_EDIT, "edit"),
+    Markup.button.callback(BTN_REMOVE_MODE, "remove_mode"),
+  ]);
+
   return Markup.inlineKeyboard(rows);
 }
 
@@ -675,27 +790,61 @@ function dishesKeyboard(catKey) {
   for (let i = 0; i < dishes.length; i += 2) {
     const a = dishes[i];
     const b = dishes[i + 1];
+
     const row = [Markup.button.callback("➕ " + a, "add:" + a)];
+
     if (b) row.push(Markup.button.callback("➕ " + b, "add:" + b));
+
     rows.push(row);
   }
 
-  rows.push([Markup.button.callback(BTN_BACK_CATS, "cats"), Markup.button.callback(BTN_CLEAR, "clear")]);
-  rows.push([Markup.button.callback(BTN_SEND, "send"), Markup.button.callback(BTN_REMOVE_MODE, "remove_mode")]);
+  rows.push([
+    Markup.button.callback(BTN_BACK_CATS, "cats"),
+    Markup.button.callback(BTN_CLEAR, "clear"),
+  ]);
+
+  rows.push([
+    Markup.button.callback(BTN_SEND, "send"),
+    Markup.button.callback(BTN_REMOVE_MODE, "remove_mode"),
+  ]);
+
   rows.push([Markup.button.callback(BTN_EDIT, "edit")]);
 
   return Markup.inlineKeyboard(rows);
 }
 
-// 👇 NEW: cutlery question keyboard
 function cutleryKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("✅ Да", "cutlery:yes"), Markup.button.callback("❌ Нет", "cutlery:no")],
+    [
+      Markup.button.callback("✅ Да", "cutlery:yes"),
+      Markup.button.callback("❌ Нет", "cutlery:no"),
+    ],
   ]);
 }
 
+async function askCutlery(ctx) {
+  await ctx.reply("Нужны столовые приборы? (да/нет)", cutleryKeyboard());
+}
+
+function parseYesNo(txt) {
+  const t = String(txt || "").trim().toLowerCase();
+
+  const yes = ["да", "y", "yes", "1", "true", "угу", "нужны", "need", "ok", "✅"];
+  const no = ["нет", "n", "no", "0", "false", "не", "не нужны", "dont", "don't", "❌"];
+
+  if (yes.includes(t)) return true;
+  if (no.includes(t)) return false;
+
+  if (t.startsWith("да")) return true;
+  if (t.startsWith("нет")) return false;
+  if (t.startsWith("yes")) return true;
+  if (t.startsWith("no")) return false;
+
+  return null;
+}
 async function showCategories(ctx) {
   const st = getState(ctx);
+
   const text =
     "🧾 Создание заказа\n\n" +
     "Номер: " + (st.orderNo || "—") + "\n" +
@@ -721,12 +870,15 @@ async function showCategories(ctx) {
 async function showDishes(ctx, catKey) {
   const st = getState(ctx);
   st.cat = catKey;
+
   const catLabel = CATEGORIES.find((c) => c.key === catKey)?.label || catKey;
 
   const text =
     "📂 " + catLabel + "\n\n" +
     "Номер: " + (st.orderNo || "—") + " | Время: " + st.prepMinutes + " мин\n" +
-    "Приборы: " + (st.cutlery === true ? "Да" : st.cutlery === false ? "Нет" : "—") + "\n\n" +
+    "Приборы: " +
+    (st.cutlery === true ? "Да" : st.cutlery === false ? "Нет" : "—") +
+    "\n\n" +
     "Корзина:\n" +
     cartSummary(st.cart) +
     "\n\nНажимай блюда (➕):";
@@ -741,98 +893,420 @@ async function showDishes(ctx, catKey) {
     await ctx.reply(text, dishesKeyboard(catKey));
   }
 }
-
-async function askCutlery(ctx) {
-  await ctx.reply("Нужны столовые приборы? (да/нет)", cutleryKeyboard());
+// ==========================
+// SCREENSHOT OCR HELPERS
+// ==========================
+function allMenuNames() {
+  return Object.values(MENU_BY_CAT).flat();
 }
 
-// text -> boolean
-function parseYesNo(txt) {
-  const t = String(txt || "").trim().toLowerCase();
-  const yes = ["да", "y", "yes", "1", "true", "угу", "нужны", "need", "ok", "✅"];
-  const no = ["нет", "n", "no", "0", "false", "не", "не нужны", "dont", "don't", "❌"];
-  if (yes.includes(t)) return true;
-  if (no.includes(t)) return false;
-  // also accept startswith
-  if (t.startsWith("да")) return true;
-  if (t.startsWith("нет")) return false;
-  if (t.startsWith("yes")) return true;
-  if (t.startsWith("no")) return false;
-  return null;
+function normalizeText(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
+function findBestMenuName(rawName) {
+  const raw = normalizeText(rawName);
+
+  if (!raw) return null;
+
+  const menu = allMenuNames();
+
+  let bestName = null;
+  let bestScore = 0;
+
+  for (const menuName of menu) {
+    const m = normalizeText(menuName);
+
+    let score = 0;
+
+    if (raw === m) {
+      score = 100;
+    } else if (raw.includes(m) || m.includes(raw)) {
+      score = 85;
+    } else {
+      const rawParts = raw.split(" ").filter(Boolean);
+      const menuParts = m.split(" ").filter(Boolean);
+
+      let hits = 0;
+
+      for (const p of menuParts) {
+        if (rawParts.includes(p)) hits++;
+      }
+
+      score = hits * 25;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestName = menuName;
+    }
+  }
+
+  return bestScore >= 40 ? bestName : null;
+}
+
+function safeJsonParse(text) {
+  const cleaned = String(text || "")
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    return {
+      orderNo: "",
+      cutlery: null,
+      items: [],
+    };
+  }
+}
+
+async function recognizeScreenshots(ctx, fileIds) {
+  if (!openai) {
+    throw new Error("OPENAI_API_KEY is not set");
+  }
+
+  const imageUrls = [];
+
+  for (const fileId of fileIds) {
+    const link = await ctx.telegram.getFileLink(fileId);
+    imageUrls.push(link.href);
+  }
+
+  const menuText = allMenuNames().join("\n");
+
+  const content = [
+    {
+      type: "text",
+      text:
+        "Ты читаешь скриншоты заказа из ресторана. " +
+        "На скриншотах может быть один заказ, разбитый на 1, 2 или 3 изображения. " +
+        "Нужно найти номер заказа, блюда и количество. " +
+        "Используй только позиции из списка меню ниже. " +
+        "Если название похоже, выбери ближайшее из меню. " +
+        "Если количество не видно, ставь 1. " +
+        "Если на скриншоте есть информация о приборах/cutlery, верни cutlery true или false. " +
+        "Если про приборы информации нет, верни cutlery null. " +
+        "Верни строго JSON без markdown, без пояснений. " +
+        "Формат JSON: " +
+        '{"orderNo":"GF-123","cutlery":true,"items":[{"name":"Борщ S2","qty":1}]} ' +
+        "\n\nСПИСОК МЕНЮ:\n" +
+        menuText,
+    },
+  ];
+
+  for (const url of imageUrls) {
+    content.push({
+      type: "image_url",
+      image_url: {
+        url,
+      },
+    });
+  }
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "user",
+        content,
+      },
+    ],
+    temperature: 0,
+  });
+
+  const answer = response.choices?.[0]?.message?.content || "{}";
+  const parsed = safeJsonParse(answer);
+
+  const cart = {};
+
+  for (const item of parsed.items || []) {
+    const matchedName = findBestMenuName(item.name);
+
+    if (!matchedName) continue;
+
+    const qty = Math.max(1, Math.floor(Number(item.qty || 1)));
+
+    cart[matchedName] = (cart[matchedName] || 0) + qty;
+  }
+
+  let cutlery = null;
+
+  if (parsed.cutlery === true) cutlery = true;
+  if (parsed.cutlery === false) cutlery = false;
+
+  return {
+    orderNo: String(parsed.orderNo || "").trim(),
+    cutlery,
+    cart,
+  };
+}
+function screenshotUploadKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(BTN_OCR_READ, "ocr_read")],
+    [Markup.button.callback(BTN_OCR_DELETE, "ocr_cancel")],
+  ]);
+}
+
+function screenshotEditText(st) {
+  return (
+    "📸 Заказ из screenshot\n\n" +
+    "Номер: " + (st.orderNo || "—") + "\n" +
+    "Время: " + (st.prepMinutes || 25) + " мин\n" +
+    "Приборы: " +
+    (st.cutlery === true ? "Да" : st.cutlery === false ? "Нет" : "—") +
+    "\n\n" +
+    "Блюда:\n" +
+    cartSummary(st.cart) +
+    "\n\nПроверь список. Можно исправить количество через ➖ / ➕."
+  );
+}
+
+function screenshotEditKeyboard(st) {
+  const rows = [];
+
+  const entries = Object.entries(st.cart || {});
+
+  for (const [name, qty] of entries) {
+    rows.push([
+      Markup.button.callback("➖", "ocr_minus:" + name),
+      Markup.button.callback(name + " x" + qty, "noop"),
+      Markup.button.callback("➕", "ocr_plus:" + name),
+    ]);
+  }
+
+  rows.push([Markup.button.callback(BTN_OCR_ADD_ITEM, "ocr_add_item")]);
+
+  rows.push([
+    Markup.button.callback("🍴 Приборы: Да", "ocr_cutlery_yes"),
+    Markup.button.callback("🚫 Приборы: Нет", "ocr_cutlery_no"),
+  ]);
+
+  rows.push([
+    Markup.button.callback(BTN_OCR_CONFIRM, "ocr_confirm"),
+    Markup.button.callback(BTN_OCR_DELETE, "ocr_cancel"),
+  ]);
+
+  return Markup.inlineKeyboard(rows);
+}
+
+function screenshotAddCategoryKeyboard() {
+  const rows = [];
+
+  for (let i = 0; i < CATEGORIES.length; i += 2) {
+    const a = CATEGORIES[i];
+    const b = CATEGORIES[i + 1];
+
+    const row = [Markup.button.callback(a.label, "ocr_cat:" + a.key)];
+
+    if (b) row.push(Markup.button.callback(b.label, "ocr_cat:" + b.key));
+
+    rows.push(row);
+  }
+
+  rows.push([Markup.button.callback(BTN_OCR_BACK, "ocr_back")]);
+
+  return Markup.inlineKeyboard(rows);
+}
+
+function screenshotAddDishesKeyboard(catKey) {
+  const dishes = MENU_BY_CAT[catKey] || [];
+  const rows = [];
+
+  for (let i = 0; i < dishes.length; i += 2) {
+    const a = dishes[i];
+    const b = dishes[i + 1];
+
+    const row = [Markup.button.callback("➕ " + a, "ocr_add:" + a)];
+
+    if (b) row.push(Markup.button.callback("➕ " + b, "ocr_add:" + b));
+
+    rows.push(row);
+  }
+
+  rows.push([
+    Markup.button.callback("⬅️ Категории", "ocr_add_item"),
+    Markup.button.callback(BTN_OCR_BACK, "ocr_back"),
+  ]);
+
+  return Markup.inlineKeyboard(rows);
+}
+// ==========================
+// START / MAIN BUTTONS
+// ==========================
 bot.start(async (ctx) => {
   if (await deny(ctx)) return;
+
   const st = getState(ctx);
-  st.step = "idle";
-  await ctx.reply("Готово. Нажми «Новый заказ».", mainKeyboard());
+  resetState(st);
+
+  await ctx.reply(
+    "Готово. Выбери способ создания заказа.",
+    mainKeyboard()
+  );
 });
 
 bot.hears(BTN_NEW, async (ctx) => {
   if (await deny(ctx)) return;
-  const st = getState(ctx);
 
-  if (st.orderId) deleteKitchenOrder(st.orderId);
+  const st = getState(ctx);
+  resetState(st);
 
   st.step = "entering_order";
-  st.orderNo = "";
-  st.prepMinutes = 25;
-  st.cart = {};
-  st.cat = null;
-  st.orderId = null;
-  st.cutlery = null;
 
-  await ctx.reply("Введите номер заказа (например GF-254):", mainKeyboard());
+  await ctx.reply(
+    "Введите номер заказа, например GF-254:",
+    mainKeyboard()
+  );
 });
 
-bot.on("text", async (ctx) => {
+bot.hears(BTN_NEW_SCREENSHOT, async (ctx) => {
   if (await deny(ctx)) return;
-  const st = getState(ctx);
-  const txt = (ctx.message.text || "").trim();
-  if (txt === BTN_NEW) return;
 
-  if (st.step === "entering_order") {
-    if (st.orderId) deleteKitchenOrder(st.orderId);
-    st.orderNo = txt;
-    st.step = "entering_time";
-    await ctx.reply("Введите время приготовления (минуты 1–240), например 20:", mainKeyboard());
+  const st = getState(ctx);
+  resetState(st);
+
+  st.step = "screenshot_waiting";
+  st.screenshotMode = true;
+  st.screenshotPhotos = [];
+
+  await ctx.reply(
+    "📸 Отправь 1–3 скриншота одного заказа.\n\n" +
+      "Когда все скриншоты отправлены — нажми «✅ Читать скриншоты».",
+    screenshotUploadKeyboard()
+  );
+});
+// ==========================
+// SCREENSHOT PHOTO INPUT
+// ==========================
+bot.on("photo", async (ctx) => {
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+
+  if (st.step !== "screenshot_waiting") {
+    await ctx.reply(
+      "Фото получено, но сейчас не включен режим screenshot-заказа.\n\n" +
+        "Нажми «📸 Новый заказ screenshot».",
+      mainKeyboard()
+    );
     return;
   }
 
+  if (st.screenshotPhotos.length >= 3) {
+    await ctx.reply(
+      "Можно максимум 3 скриншота на один заказ.\n\n" +
+        "Если все скриншоты уже отправлены — нажми «✅ Читать скриншоты».",
+      screenshotUploadKeyboard()
+    );
+    return;
+  }
+
+  const photos = ctx.message.photo || [];
+  const bestPhoto = photos[photos.length - 1];
+
+  if (!bestPhoto || !bestPhoto.file_id) {
+    await ctx.reply("Не удалось получить фото. Отправь скриншот еще раз.");
+    return;
+  }
+
+  st.screenshotPhotos.push(bestPhoto.file_id);
+
+  await ctx.reply(
+    "✅ Скриншот добавлен: " +
+      st.screenshotPhotos.length +
+      "/3\n\n" +
+      "Можешь отправить еще скриншот или нажать «✅ Читать скриншоты».",
+    screenshotUploadKeyboard()
+  );
+});
+// ==========================
+// TEXT INPUT
+// ==========================
+bot.on("text", async (ctx) => {
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  const txt = (ctx.message.text || "").trim();
+
+  if (txt === BTN_NEW || txt === BTN_NEW_SCREENSHOT) return;
+
+  // ==========================
+  // MANUAL MODE: order number
+  // ==========================
+  if (st.step === "entering_order") {
+    if (st.orderId) deleteKitchenOrder(st.orderId);
+
+    st.orderNo = txt;
+    st.step = "entering_time";
+
+    await ctx.reply(
+      "Введите время приготовления, минуты 1–240.\nНапример: 20",
+      mainKeyboard()
+    );
+
+    return;
+  }
+
+  // ==========================
+  // MANUAL MODE: prep time
+  // ==========================
   if (st.step === "entering_time") {
     const n = Number(txt);
+
     if (!Number.isFinite(n) || n < 1 || n > 240) {
-      await ctx.reply("Введите число 1–240.", mainKeyboard());
+      await ctx.reply("Введите число от 1 до 240.", mainKeyboard());
       return;
     }
 
     st.prepMinutes = Math.floor(n);
 
     if (!st.orderNo.trim()) {
-      await ctx.reply("❌ Нет номера заказа. Нажми «Новый заказ».", mainKeyboard());
+      await ctx.reply(
+        "❌ Нет номера заказа. Нажми «🧾 Новый заказ».",
+        mainKeyboard()
+      );
+
       st.step = "idle";
       return;
     }
 
-    // ✅ стартуем таймер сразу (пока выбирают блюда/приборы)
+    // Таймер стартует сразу, как в старой логике
     st.orderId = addKitchenOrder(st.orderNo.trim(), st.prepMinutes);
 
-    // 👇 NEW: спросить про приборы
     st.step = "entering_cutlery";
-    await ctx.reply("⏱ Таймер уже идет на ТВ: " + PUBLIC_URL + "/screen", mainKeyboard());
+
+    await ctx.reply(
+      "⏱ Таймер уже идет на ТВ:\n" + PUBLIC_URL + "/screen",
+      mainKeyboard()
+    );
+
     await askCutlery(ctx);
     return;
   }
 
-  // 👇 NEW: accept typed yes/no
+  // ==========================
+  // MANUAL MODE: cutlery yes/no
+  // ==========================
   if (st.step === "entering_cutlery") {
     if (!st.orderId) {
-      await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+      await ctx.reply(
+        "❌ Заказ на экране не найден. Создай заказ заново.",
+        mainKeyboard()
+      );
+
       st.step = "idle";
       return;
     }
 
     const val = parseYesNo(txt);
+
     if (val === null) {
       await ctx.reply("Ответь «да» или «нет».", mainKeyboard());
       await askCutlery(ctx);
@@ -840,128 +1314,126 @@ bot.on("text", async (ctx) => {
     }
 
     st.cutlery = val;
+
     const ok = updateKitchenOrderCutlery(st.orderId, val);
+
     if (!ok) {
-      await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+      await ctx.reply(
+        "❌ Заказ на экране не найден. Создай заказ заново.",
+        mainKeyboard()
+      );
+
       st.step = "idle";
       return;
     }
 
     st.step = "selecting_items";
+
     await showCategories(ctx);
     return;
   }
 
-  await ctx.reply("Нажми «Новый заказ».", mainKeyboard());
+  // ==========================
+  // SCREENSHOT MODE: enter order number manually if OCR did not find it
+  // ==========================
+  if (st.step === "screenshot_entering_order_no") {
+    st.orderNo = txt || "SCREENSHOT";
+    st.step = "screenshot_editing";
+
+    await ctx.reply(
+      screenshotEditText(st),
+      screenshotEditKeyboard(st)
+    );
+
+    return;
+  }
+
+  // ==========================
+  // SCREENSHOT MODE: prep time after confirmation
+  // ==========================
+  if (st.step === "screenshot_entering_time") {
+    const n = Number(txt);
+
+    if (!Number.isFinite(n) || n < 1 || n > 240) {
+      await ctx.reply("Введите число от 1 до 240.", mainKeyboard());
+      return;
+    }
+
+    st.prepMinutes = Math.floor(n);
+
+    if (!st.orderNo.trim()) {
+      st.orderNo = "SCREENSHOT";
+    }
+
+    if (st.orderId) deleteKitchenOrder(st.orderId);
+
+    // В screenshot-режиме таймер стартует после указания времени
+    st.orderId = addKitchenOrder(st.orderNo.trim(), st.prepMinutes);
+
+    if (st.cutlery === true || st.cutlery === false) {
+      updateKitchenOrderCutlery(st.orderId, st.cutlery);
+    }
+
+    st.step = "screenshot_ready_to_send";
+
+    await ctx.reply(
+      "✅ Время установлено: " +
+        st.prepMinutes +
+        " мин.\n\nТеперь нажми «✅ Отправить на ТВ».",
+      Markup.inlineKeyboard([
+        [Markup.button.callback(BTN_OCR_SEND_TV, "ocr_send_tv")],
+        [Markup.button.callback(BTN_OCR_DELETE, "ocr_cancel")],
+      ])
+    );
+
+    return;
+  }
+
+  await ctx.reply(
+    "Выбери способ создания заказа.",
+    mainKeyboard()
+  );
 });
-
-// callbacks
-bot.action("cats", async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-  await showCategories(ctx);
-});
-
-bot.action(/cat:(.+)/, async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-  await showDishes(ctx, ctx.match[1]);
-});
-
-bot.action(/add:(.+)/, async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-  const st = getState(ctx);
-  const name = ctx.match[1];
-  st.cart[name] = (st.cart[name] || 0) + 1;
-  if (st.cat) await showDishes(ctx, st.cat);
-  else await showCategories(ctx);
-});
-
-bot.action("clear", async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-  const st = getState(ctx);
-  st.cart = {};
-  if (st.cat) await showDishes(ctx, st.cat);
-  else await showCategories(ctx);
-});
-
-bot.action("edit", async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-
-  const st = getState(ctx);
-  if (st.orderId) deleteKitchenOrder(st.orderId);
-
-  st.step = "entering_order";
-  st.orderNo = "";
-  st.prepMinutes = 25;
-  st.cart = {};
-  st.cat = null;
-  st.orderId = null;
-  st.cutlery = null;
-
-  await ctx.reply("Введите номер заказа заново:", mainKeyboard());
-});
-
-bot.action("remove_mode", async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-
-  const st = getState(ctx);
-  const keys = Object.keys(st.cart);
-  if (!keys.length) return ctx.reply("Корзина пустая.", mainKeyboard());
-
-  const rows = keys.map((k) => [Markup.button.callback("➖ " + k + " (x" + st.cart[k] + ")", "rem:" + k)]);
-  rows.push([Markup.button.callback("⬅️ Назад", st.cat ? "back_to_dishes" : "cats")]);
-  await ctx.reply("Выбери позицию, чтобы уменьшить на 1:", Markup.inlineKeyboard(rows));
-});
-
-bot.action("back_to_dishes", async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-  const st = getState(ctx);
-  if (st.cat) await showDishes(ctx, st.cat);
-  else await showCategories(ctx);
-});
-
-bot.action(/rem:(.+)/, async (ctx) => {
-  await ctx.answerCbQuery();
-  if (await deny(ctx)) return;
-  const st = getState(ctx);
-  const name = ctx.match[1];
-  const v = (st.cart[name] || 0) - 1;
-  if (v <= 0) delete st.cart[name];
-  else st.cart[name] = v;
-  await ctx.reply("Ок: " + name, mainKeyboard());
-});
-
-// 👇 NEW: cutlery callbacks
+// ==========================
+// MANUAL MODE CUTLERY CALLBACKS
+// ==========================
 bot.action("cutlery:yes", async (ctx) => {
   await ctx.answerCbQuery();
   if (await deny(ctx)) return;
 
   const st = getState(ctx);
+
   if (st.step !== "entering_cutlery") {
     await ctx.reply("Ок.", mainKeyboard());
     return;
   }
+
   if (!st.orderId) {
-    await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    await ctx.reply(
+      "❌ Заказ на экране не найден. Создай заказ заново.",
+      mainKeyboard()
+    );
+
     st.step = "idle";
     return;
   }
 
   st.cutlery = true;
+
   const ok = updateKitchenOrderCutlery(st.orderId, true);
+
   if (!ok) {
-    await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    await ctx.reply(
+      "❌ Заказ на экране не найден. Создай заказ заново.",
+      mainKeyboard()
+    );
+
     st.step = "idle";
     return;
   }
 
   st.step = "selecting_items";
+
   await showCategories(ctx);
 });
 
@@ -970,25 +1442,38 @@ bot.action("cutlery:no", async (ctx) => {
   if (await deny(ctx)) return;
 
   const st = getState(ctx);
+
   if (st.step !== "entering_cutlery") {
     await ctx.reply("Ок.", mainKeyboard());
     return;
   }
+
   if (!st.orderId) {
-    await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    await ctx.reply(
+      "❌ Заказ на экране не найден. Создай заказ заново.",
+      mainKeyboard()
+    );
+
     st.step = "idle";
     return;
   }
 
   st.cutlery = false;
+
   const ok = updateKitchenOrderCutlery(st.orderId, false);
+
   if (!ok) {
-    await ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    await ctx.reply(
+      "❌ Заказ на экране не найден. Создай заказ заново.",
+      mainKeyboard()
+    );
+
     st.step = "idle";
     return;
   }
 
   st.step = "selecting_items";
+
   await showCategories(ctx);
 });
 
@@ -999,20 +1484,323 @@ bot.action("send", async (ctx) => {
   const st = getState(ctx);
 
   if (st.step === "entering_cutlery") {
-    return ctx.reply("❌ Сначала ответь про приборы (да/нет).", mainKeyboard());
+    await ctx.reply(
+      "❌ Сначала ответь про приборы: да или нет.",
+      mainKeyboard()
+    );
+    return;
   }
 
-  const items = Object.entries(st.cart).map(([name, qty]) => ({ name, qty }));
+  const items = cartToItems(st.cart);
 
-  if (!st.orderId) return ctx.reply("❌ Сначала введи номер и время.", mainKeyboard());
-  if (!items.length) return ctx.reply("❌ Корзина пустая.", mainKeyboard());
+  if (!st.orderId) {
+    await ctx.reply(
+      "❌ Сначала введи номер и время.",
+      mainKeyboard()
+    );
+    return;
+  }
+
+  if (!items.length) {
+    await ctx.reply(
+      "❌ Корзина пустая.",
+      mainKeyboard()
+    );
+    return;
+  }
 
   const ok = updateKitchenOrderItems(st.orderId, items);
+
   if (!ok) {
-    return ctx.reply("❌ Заказ на экране не найден (сервер перезапускался). Создай заказ заново.", mainKeyboard());
+    await ctx.reply(
+      "❌ Заказ на экране не найден. Создай заказ заново.",
+      mainKeyboard()
+    );
+    return;
   }
 
-  await ctx.reply("✅ Блюда появились на ТВ", mainKeyboard());
+  await ctx.reply(
+    "✅ Блюда появились на ТВ.",
+    mainKeyboard()
+  );
+
+  resetState(st);
+});
+// ==========================
+// SCREENSHOT MODE CALLBACKS
+// ==========================
+bot.action("noop", async (ctx) => {
+  await ctx.answerCbQuery();
+});
+
+bot.action("ocr_read", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+
+  if (st.step !== "screenshot_waiting") {
+    await ctx.reply(
+      "Сначала нажми «📸 Новый заказ screenshot».",
+      mainKeyboard()
+    );
+    return;
+  }
+
+  if (!st.screenshotPhotos.length) {
+    await ctx.reply(
+      "Сначала отправь хотя бы один скриншот.",
+      screenshotUploadKeyboard()
+    );
+    return;
+  }
+
+  await ctx.reply("⏳ Читаю скриншоты...");
+
+  try {
+    const result = await recognizeScreenshots(ctx, st.screenshotPhotos);
+
+    st.orderNo = result.orderNo || "";
+    st.cutlery = result.cutlery;
+    st.cart = result.cart || {};
+    st.step = "screenshot_editing";
+
+    if (!st.orderNo) {
+      st.step = "screenshot_entering_order_no";
+
+      await ctx.reply(
+        "Бот прочитал скриншоты, но не нашел номер заказа.\n\nВведите номер заказа вручную:",
+        mainKeyboard()
+      );
+
+      return;
+    }
+
+    await ctx.reply(
+      screenshotEditText(st),
+      screenshotEditKeyboard(st)
+    );
+  } catch (e) {
+    console.error("OCR ERROR:", e);
+
+    await ctx.reply(
+      "❌ Не удалось прочитать скриншоты.\n\n" +
+        "Проверь OPENAI_API_KEY и попробуй отправить скриншоты еще раз.",
+      mainKeyboard()
+    );
+
+    resetState(st);
+  }
+});
+
+bot.action(/ocr_plus:(.+)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  const name = ctx.match[1];
+
+  st.cart[name] = (st.cart[name] || 0) + 1;
+
+  await ctx.editMessageText(
+    screenshotEditText(st),
+    screenshotEditKeyboard(st)
+  );
+});
+
+bot.action(/ocr_minus:(.+)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  const name = ctx.match[1];
+
+  const nextQty = (st.cart[name] || 0) - 1;
+
+  if (nextQty <= 0) {
+    delete st.cart[name];
+  } else {
+    st.cart[name] = nextQty;
+  }
+
+  await ctx.editMessageText(
+    screenshotEditText(st),
+    screenshotEditKeyboard(st)
+  );
+});
+
+bot.action("ocr_cutlery_yes", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  st.cutlery = true;
+
+  await ctx.editMessageText(
+    screenshotEditText(st),
+    screenshotEditKeyboard(st)
+  );
+});
+
+bot.action("ocr_cutlery_no", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  st.cutlery = false;
+
+  await ctx.editMessageText(
+    screenshotEditText(st),
+    screenshotEditKeyboard(st)
+  );
+});
+bot.action("ocr_add_item", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  await ctx.reply(
+    "Выбери категорию, из которой нужно добавить блюдо:",
+    screenshotAddCategoryKeyboard()
+  );
+});
+
+bot.action(/ocr_cat:(.+)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const catKey = ctx.match[1];
+  const catLabel = CATEGORIES.find((c) => c.key === catKey)?.label || catKey;
+
+  await ctx.reply(
+    "📂 " + catLabel + "\n\nВыбери блюдо для добавления:",
+    screenshotAddDishesKeyboard(catKey)
+  );
+});
+
+bot.action(/ocr_add:(.+)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  const name = ctx.match[1];
+
+  st.cart[name] = (st.cart[name] || 0) + 1;
+
+  await ctx.reply(
+    screenshotEditText(st),
+    screenshotEditKeyboard(st)
+  );
+});
+
+bot.action("ocr_back", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+
+  await ctx.reply(
+    screenshotEditText(st),
+    screenshotEditKeyboard(st)
+  );
+});
+bot.action("ocr_confirm", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+
+  const items = cartToItems(st.cart);
+
+  if (!items.length) {
+    await ctx.reply(
+      "❌ В заказе нет блюд. Добавь блюдо или удали заказ.",
+      screenshotEditKeyboard(st)
+    );
+    return;
+  }
+
+  if (!st.orderNo.trim()) {
+    st.step = "screenshot_entering_order_no";
+
+    await ctx.reply(
+      "Введите номер заказа:",
+      mainKeyboard()
+    );
+
+    return;
+  }
+
+  st.step = "screenshot_entering_time";
+
+  await ctx.reply(
+    "Введите время приготовления, минуты 1–240.\nНапример: 20",
+    mainKeyboard()
+  );
+});
+
+bot.action("ocr_cancel", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+
+  resetState(st);
+
+  await ctx.reply(
+    "❌ Screenshot-заказ удален.",
+    mainKeyboard()
+  );
+});
+
+bot.action("ocr_send_tv", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+
+  if (st.step !== "screenshot_ready_to_send") {
+    await ctx.reply(
+      "❌ Сначала подтверди заказ и введи время приготовления.",
+      mainKeyboard()
+    );
+    return;
+  }
+
+  if (!st.orderId) {
+    await ctx.reply(
+      "❌ Заказ на ТВ не создан. Введи время заново.",
+      mainKeyboard()
+    );
+    st.step = "screenshot_entering_time";
+    return;
+  }
+
+  const items = cartToItems(st.cart);
+
+  if (!items.length) {
+    await ctx.reply(
+      "❌ Корзина пустая.",
+      mainKeyboard()
+    );
+    return;
+  }
+
+  const ok = updateKitchenOrderItems(st.orderId, items);
+
+  if (!ok) {
+    await ctx.reply(
+      "❌ Заказ на экране не найден. Создай заказ заново.",
+      mainKeyboard()
+    );
+
+    resetState(st);
+    return;
+  }
+
+  await ctx.reply(
+    "✅ Screenshot-заказ отправлен на ТВ.",
+    mainKeyboard()
+  );
 
   st.step = "idle";
   st.orderNo = "";
@@ -1021,29 +1809,42 @@ bot.action("send", async (ctx) => {
   st.cat = null;
   st.orderId = null;
   st.cutlery = null;
+  st.screenshotPhotos = [];
+  st.screenshotMode = false;
 });
-
 // ==========================
 // WEBHOOK
 // ==========================
 const WEBHOOK_PATH = `/tg/${WEBHOOK_SECRET}`;
+
 app.post(WEBHOOK_PATH, async (req, res) => {
   try {
     await bot.handleUpdate(req.body, res);
-    if (!res.headersSent) res.sendStatus(200);
+
+    if (!res.headersSent) {
+      res.sendStatus(200);
+    }
   } catch (e) {
     console.error("HANDLE UPDATE ERROR:", e);
-    if (!res.headersSent) res.sendStatus(200);
+
+    if (!res.headersSent) {
+      res.sendStatus(200);
+    }
   }
 });
-
 // ==========================
 // START
 // ==========================
 const PORT = process.env.PORT || 3000;
+
 http.createServer(app).listen(PORT, async () => {
   console.log("Listening on", PORT);
+
   const webhookUrl = `${PUBLIC_URL}${WEBHOOK_PATH}`;
-  await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
+
+  await bot.telegram.setWebhook(webhookUrl, {
+    drop_pending_updates: true,
+  });
+
   console.log("Webhook set to:", webhookUrl);
 });
