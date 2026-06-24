@@ -1065,7 +1065,6 @@ async function recognizeScreenshots(ctx, fileIds) {
     cart,
   };
 }
-}
 function screenshotUploadKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback(BTN_OCR_READ, "ocr_read")],
