@@ -894,6 +894,117 @@ async function showDishes(ctx, catKey) {
   }
 }
 // ==========================
+// MANUAL MODE CALLBACKS
+// ==========================
+bot.action("cats", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+  await showCategories(ctx);
+});
+
+bot.action(/cat:(.+)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+  await showDishes(ctx, ctx.match[1]);
+});
+
+bot.action(/add:(.+)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  const name = ctx.match[1];
+
+  st.cart[name] = (st.cart[name] || 0) + 1;
+
+  if (st.cat) await showDishes(ctx, st.cat);
+  else await showCategories(ctx);
+});
+
+bot.action("clear", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  st.cart = {};
+
+  if (st.cat) await showDishes(ctx, st.cat);
+  else await showCategories(ctx);
+});
+
+bot.action("edit", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+
+  resetState(st);
+  st.step = "entering_order";
+
+  await ctx.reply(
+    "Введите номер заказа заново:",
+    mainKeyboard()
+  );
+});
+
+bot.action("remove_mode", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  const keys = Object.keys(st.cart || {});
+
+  if (!keys.length) {
+    await ctx.reply("Корзина пустая.");
+    return;
+  }
+
+  const rows = keys.map((name) => [
+    Markup.button.callback(
+      "➖ " + name + " (x" + st.cart[name] + ")",
+      "rem:" + name
+    ),
+  ]);
+
+  rows.push([
+    Markup.button.callback(
+      "⬅️ Назад",
+      st.cat ? "back_to_dishes" : "cats"
+    ),
+  ]);
+
+  await ctx.reply(
+    "Выбери позицию для удаления:",
+    Markup.inlineKeyboard(rows)
+  );
+});
+
+bot.action("back_to_dishes", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+
+  if (st.cat) await showDishes(ctx, st.cat);
+  else await showCategories(ctx);
+});
+
+bot.action(/rem:(.+)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (await deny(ctx)) return;
+
+  const st = getState(ctx);
+  const name = ctx.match[1];
+
+  const nextQty = (st.cart[name] || 0) - 1;
+
+  if (nextQty <= 0) delete st.cart[name];
+  else st.cart[name] = nextQty;
+
+  if (st.cat) await showDishes(ctx, st.cat);
+  else await showCategories(ctx);
+});
+// ==========================
 // SCREENSHOT OCR HELPERS
 // ==========================
 function allMenuNames() {
