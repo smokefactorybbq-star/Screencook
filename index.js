@@ -1663,11 +1663,21 @@ bot.action("send", async (ctx) => {
   }
 
   await ctx.reply(
-    "✅ Блюда появились на ТВ.",
-    mainKeyboard()
-  );
+  "✅ Блюда появились на ТВ.",
+  mainKeyboard()
+);
 
-  resetState(st);
+// очищаем состояние бота,
+// но НЕ удаляем заказ с ТВ
+st.step = "idle";
+st.orderNo = "";
+st.prepMinutes = 25;
+st.cart = {};
+st.cat = null;
+st.orderId = null;
+st.cutlery = null;
+st.screenshotPhotos = [];
+st.screenshotMode = false;
 });
 // ==========================
 // SCREENSHOT MODE CALLBACKS
