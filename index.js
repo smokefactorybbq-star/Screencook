@@ -64,7 +64,7 @@ const CATEGORIES = [
 const MENU_BY_CAT = {
   soups: ["Кур бульон S1", "Борщ S2", "Гороховый суп S3", "Грибной суп S5", "Окрошка S5", "Солянка S4"],
 
-  gastronomy: ["Ребро копченое", "Джерки"],
+  gastronomy: ["Ребро варкоп", "Джерки"],
 
   mains: [
     "Пельмени M1",
@@ -111,7 +111,7 @@ const MENU_BY_CAT = {
     "Куриный 2.0 G6",
     "Кебаб свин-гов G4",
     "Кебаб курица G5",
-    "Wings куриные G7",
+    "Wings кур G7",
   ],
 
   salads: [
@@ -119,11 +119,11 @@ const MENU_BY_CAT = {
     "Деревенский T2",
     "Обжорка T3",
     "Цезарь T4",
-    "Овощной Сметана T6",
-    "Овощной Майонез T7",
-    "Овощной Масло T8",
+    "Овощ Смет T6",
+    "Овощ Майо T7",
+    "Овощ Масло T8",
     "Баклажаны T5",
-    "Крабовый T9",
+    "Сrab T9",
   ],
 };
 // ==========================
@@ -289,26 +289,6 @@ function screenHtml() {
       padding:58px var(--page-pad) var(--page-pad);
     }
 
-    .warning-banner{
-      display:none;
-      width:100%;
-      margin:0 0 8px;
-      padding:8px 72px 8px 12px;
-      border:1px solid rgba(255,212,0,.55);
-      border-radius:12px;
-      background:rgba(255,69,58,.16);
-      color:#ffd400;
-      text-align:center;
-      font-size:clamp(15px,1.35vw,25px);
-      line-height:1.15;
-      font-weight:1000;
-      letter-spacing:.25px;
-      text-transform:uppercase;
-      box-shadow:0 7px 20px rgba(0,0,0,.22);
-    }
-
-    .warning-banner.visible{display:block}
-
     .orders{
       width:100%;
       display:flex;
@@ -316,21 +296,9 @@ function screenHtml() {
       gap:var(--gap);
     }
 
-    .dish{
-      font-weight:1000;
-    }
-
-    .dish-soups{color:#ffffff}
-    .dish-grill{color:#ff453a}
-    .dish-salads{color:#35e06f}
-    .dish-mains{color:#ffd400}
-    .dish-sides{color:#c77dff}
-    .dish-gastronomy{color:#c88752}
-    .dish-unknown{color:#ffffff}
-
     .order-card{
       width:100%;
-      min-height:calc((100vh - 58px - var(--page-pad) - 50px - (var(--gap) * 10)) / 10);
+      min-height:calc((100vh - 58px - var(--page-pad) - (var(--gap) * 9)) / 10);
       display:grid;
       grid-template-columns:minmax(110px,170px) minmax(0,1fr) var(--control-width);
       align-items:stretch;
@@ -485,7 +453,6 @@ function screenHtml() {
   <button class="language-button" id="language-button" type="button" aria-label="Switch language">ไทย</button>
 
   <main class="stage">
-    <div class="warning-banner" id="warning-banner"></div>
     <section class="orders" id="orders"></section>
   </main>
 
@@ -496,7 +463,6 @@ function screenHtml() {
   "use strict";
 
   var ordersNode = document.getElementById("orders");
-  var warningBanner = document.getElementById("warning-banner");
   var languageButton = document.getElementById("language-button");
   var statusNode = document.getElementById("status");
   var currentLanguage = localStorage.getItem("kitchen-language") === "th" ? "th" : "ru";
@@ -512,8 +478,7 @@ function screenHtml() {
       deleteOrder: "Удалить заказ",
       apiOk: "Связь есть",
       apiError: "Ошибка связи",
-      orders: "Заказов",
-      warning: "ВНИМАТЕЛЬНО ПРОВЕРЬ ЗАКАЗ! ДВА РАЗА ПРОВЕРЬ КОМПЛЕКТАЦИЮ!"
+      orders: "Заказов"
     },
     th: {
       ready: "พร้อม",
@@ -523,8 +488,7 @@ function screenHtml() {
       deleteOrder: "ลบออเดอร์",
       apiOk: "เชื่อมต่อแล้ว",
       apiError: "การเชื่อมต่อผิดพลาด",
-      orders: "ออเดอร์",
-      warning: "ตรวจสอบออเดอร์อย่างละเอียด! ตรวจสอบความครบถ้วนของรายการสองครั้ง!"
+      orders: "ออเดอร์"
     }
   };
 
@@ -589,72 +553,6 @@ function screenHtml() {
     "Сrab T9":"สลัดปู T9"
   };
 
-  var DISH_CATEGORY = {
-    "Кур бульон S1":"soups",
-    "Борщ S2":"soups",
-    "Гороховый суп S3":"soups",
-    "Грибной суп S5":"soups",
-    "Окрошка S5":"soups",
-    "Солянка S4":"soups",
-
-    "Ребро варкоп":"gastronomy",
-    "Джерки":"gastronomy",
-
-    "Пельмени M1":"mains",
-    "Зраза M2":"mains",
-    "Драники M3":"mains",
-    "Карошка фри M4":"mains",
-    "Картошка фри M4":"mains",
-    "Картошка дольки M5":"mains",
-    "Мини чебуреки M6":"mains",
-    "Киевская - пюре M7":"mains",
-    "Киевская - дольки M8":"mains",
-    "Лепешка с рваной БИГ M9":"mains",
-    "Лепешка с рваной СМОЛ M10":"mains",
-    "Лепешка с картошкой БИГ M11":"mains",
-    "Лепешка с картошкой СМОЛ M12":"mains",
-    "Лепешка сыр БИГ M13":"mains",
-    "Лепешка сыр СМОЛ M14":"mains",
-    "Вареники M15":"mains",
-    "Бефстроганов M17":"mains",
-    "Фаршированный перец M18":"mains",
-    "Котлеты мясные M19":"mains",
-    "Котлеты куриные M20":"mains",
-    "Голубцы Тям M25":"mains",
-    "Туш капуста M24":"mains",
-
-    "Пелюстка":"sides",
-    "Соленое сало":"sides",
-    "Сметана":"sides",
-    "Лаваш":"sides",
-    "Кетчуп":"sides",
-    "Острая морковь":"sides",
-    "Бочковой огурец":"sides",
-    "Халапеньо":"sides",
-    "Корнишон":"sides",
-    "Свежий огурец":"sides",
-    "Майонез":"sides",
-
-    "Рёбра BBQ G1":"grill",
-    "Ребра BBQ G1":"grill",
-    "Шашлык свиной G2":"grill",
-    "Шашлык куриный G3":"grill",
-    "Куриный 2.0 G6":"grill",
-    "Кебаб свин-гов G4":"grill",
-    "Кебаб курица G5":"grill",
-    "Wings кур G7":"grill",
-
-    "Столичный T1":"salads",
-    "Деревенский T2":"salads",
-    "Обжорка T3":"salads",
-    "Цезарь T4":"salads",
-    "Овощ Смет T6":"salads",
-    "Овощ Майо T7":"salads",
-    "Овощ Масло T8":"salads",
-    "Баклажаны T5":"salads",
-    "Сrab T9":"salads"
-  };
-
   function esc(value){
     return String(value == null ? "" : value)
       .replace(/&/g,"&amp;")
@@ -699,13 +597,8 @@ function screenHtml() {
   }
 
   function itemText(item){
-    var sourceName = String(item && item.name || "").trim();
     var qty = Math.max(1, Number(item && item.qty || 1));
-    var category = DISH_CATEGORY[sourceName] || "unknown";
-
-    return '<span class="dish dish-' + esc(category) + '">' +
-      esc(translateDish(sourceName)) +
-      '</span> <span class="qty">x' + qty + '</span>';
+    return esc(translateDish(item && item.name)) + ' <span class="qty">x' + qty + '</span>';
   }
 
   function dishLinesHtml(items){
@@ -752,10 +645,6 @@ function screenHtml() {
 
   function render(){
     ordersNode.innerHTML = "";
-
-    var hasOrders = currentOrders.length > 0;
-    warningBanner.textContent = UI[currentLanguage].warning;
-    warningBanner.classList.toggle("visible", hasOrders);
 
     for (var i = 0; i < currentOrders.length; i++){
       if (currentOrders[i]) ordersNode.appendChild(makeCard(currentOrders[i]));
@@ -904,6 +793,404 @@ app.get("/", (_req, res) => {
 app.get("/screen", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
+});
+
+
+// ==========================
+// COURIER SCREEN HTML
+// ==========================
+function courierScreenHtml() {
+  return `<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Courier Screen</title>
+<style>
+:root{
+  --bg:#0b1220;
+  --card:#121a2b;
+  --text:#ffffff;
+  --muted:#9aa7c7;
+  --green:#00e676;
+  --yellow:#ffd400;
+  --red:#ff453a;
+  --ready:#00ff66;
+  --ticker-bg:#020617;
+  --ticker-text:#ffffff;
+  --page-pad:18px;
+  --gap:10px;
+}
+*{box-sizing:border-box}
+html,body{width:100%;min-height:100%;margin:0}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  padding-bottom:132px;
+  overflow-x:hidden;
+}
+.wrap{
+  width:100%;
+  max-width:1500px;
+  margin:0 auto;
+  padding:var(--page-pad);
+}
+header{
+  display:flex;
+  gap:16px;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:14px;
+}
+h1{
+  margin:0;
+  font-size:clamp(24px,2.2vw,38px);
+  line-height:1;
+}
+.header-sub{
+  color:var(--muted);
+  font-size:13px;
+  margin-top:7px;
+}
+.status{
+  padding:8px 12px;
+  border-radius:12px;
+  background:rgba(255,255,255,.08);
+  color:var(--muted);
+  font-size:13px;
+  font-weight:800;
+}
+.orders{
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:var(--gap);
+}
+.order-row{
+  width:100%;
+  min-height:76px;
+  display:grid;
+  grid-template-columns:minmax(150px,1fr) minmax(160px,260px);
+  align-items:center;
+  background:var(--card);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:16px;
+  overflow:hidden;
+  box-shadow:0 8px 22px rgba(0,0,0,.24);
+}
+.order-info{
+  min-width:0;
+  padding:13px 18px;
+}
+.order-number{
+  font-size:clamp(26px,3vw,48px);
+  line-height:1;
+  font-weight:1000;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.order-caption{
+  color:var(--muted);
+  font-size:13px;
+  font-weight:800;
+  margin-top:7px;
+}
+.time-box{
+  min-height:76px;
+  height:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:10px 18px;
+  border-left:1px solid rgba(255,255,255,.12);
+}
+.time{
+  font-size:clamp(29px,3.4vw,56px);
+  line-height:1;
+  font-weight:1000;
+  white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+  letter-spacing:.5px;
+}
+.order-row.ready{
+  border-color:rgba(0,255,102,.85);
+  animation:readyPulse 1s infinite;
+}
+@keyframes readyPulse{
+  0%{box-shadow:0 0 0 rgba(0,255,102,0)}
+  50%{box-shadow:0 0 30px rgba(0,255,102,.55)}
+  100%{box-shadow:0 0 0 rgba(0,255,102,0)}
+}
+.empty{
+  min-height:120px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--muted);
+  font-size:clamp(20px,2vw,30px);
+  font-weight:900;
+  text-align:center;
+}
+.ticker{
+  position:fixed;
+  left:0;
+  right:0;
+  bottom:0;
+  height:120px;
+  background:var(--ticker-bg);
+  border-top:2px solid rgba(255,255,255,.12);
+  overflow:hidden;
+  display:flex;
+  align-items:center;
+  z-index:9999;
+}
+.ticker-track{
+  display:flex;
+  width:max-content;
+  white-space:nowrap;
+  animation:tickerMove 34s linear infinite;
+  will-change:transform;
+}
+.ticker-text{
+  display:inline-block;
+  padding-right:100px;
+  color:var(--ticker-text);
+  font-size:clamp(34px,4vw,58px);
+  line-height:1;
+  font-weight:900;
+}
+@keyframes tickerMove{
+  from{transform:translateX(0)}
+  to{transform:translateX(-50%)}
+}
+@media (max-width:700px){
+  body{padding-bottom:105px}
+  .wrap{padding:10px}
+  header{margin-bottom:10px}
+  .order-row{grid-template-columns:minmax(0,1fr) 135px;min-height:68px}
+  .time-box{min-height:68px;padding:8px}
+  .order-info{padding:10px 12px}
+  .ticker{height:95px}
+  .ticker-text{font-size:30px;padding-right:65px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Orders</h1>
+      <div class="header-sub" id="updated">—</div>
+    </div>
+    <div class="status" id="status">Connecting…</div>
+  </header>
+
+  <main class="orders" id="orders"></main>
+</div>
+
+<div class="ticker">
+  <div class="ticker-track">
+    <span class="ticker-text">เรียนไรเดอร์ทุกท่าน! ขณะนี้เรากำลังเตรียมออเดอร์ของท่านอยู่ กรุณาตรวจสอบเวลาการเตรียมอาหารบนหน้าจอ เมื่อออเดอร์พร้อมแล้ว พนักงานจะนำออเดอร์มอบให้ท่านทันที ขอบคุณที่ช่วยให้การจัดส่งรวดเร็วและมีคุณภาพ!</span>
+    <span class="ticker-text">เรียนไรเดอร์ทุกท่าน! ขณะนี้เรากำลังเตรียมออเดอร์ของท่านอยู่ กรุณาตรวจสอบเวลาการเตรียมอาหารบนหน้าจอ เมื่อออเดอร์พร้อมแล้ว พนักงานจะนำออเดอร์มอบให้ท่านทันที ขอบคุณที่ช่วยให้การจัดส่งรวดเร็วและมีคุณภาพ!</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var API_URL = "/api/orders";
+  var POLL_MS = 2500;
+  var TICK_MS = 1000;
+
+  var ordersNode = document.getElementById("orders");
+  var updatedNode = document.getElementById("updated");
+  var statusNode = document.getElementById("status");
+
+  var currentOrders = [];
+  var lastSignature = "";
+
+  function esc(value){
+    return String(value == null ? "" : value)
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;")
+      .replace(/'/g,"&#039;");
+  }
+
+  function pad2(value){
+    var text = String(value);
+    return text.length < 2 ? "0" + text : text;
+  }
+
+  function formatTime(ms){
+    var totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    var minutes = Math.floor(totalSeconds / 60);
+    var seconds = totalSeconds % 60;
+    return String(minutes) + ":" + pad2(seconds);
+  }
+
+  function timerColor(remainingMinutes){
+    if (remainingMinutes <= 0) return "var(--ready)";
+    if (remainingMinutes <= 10) return "var(--red)";
+    if (remainingMinutes <= 25) return "var(--yellow)";
+    return "var(--green)";
+  }
+
+  function makeRow(order){
+    var row = document.createElement("article");
+    row.className = "order-row";
+    row.setAttribute("data-order-id", String(order.id || ""));
+
+    row.innerHTML =
+      '<div class="order-info">' +
+        '<div class="order-number">Order ' + esc(order.orderNo || "—") + '</div>' +
+        '<div class="order-caption">' + Number(order.prepMinutes || 0) + ' min</div>' +
+      '</div>' +
+      '<div class="time-box">' +
+        '<div class="time" data-ends-at="' + Number(order.endsAt || 0) + '">--:--</div>' +
+      '</div>';
+
+    return row;
+  }
+
+  function render(){
+    ordersNode.innerHTML = "";
+
+    if (!currentOrders.length){
+      ordersNode.innerHTML = '<div class="empty">No active orders</div>';
+      return;
+    }
+
+    for (var i = 0; i < currentOrders.length; i++){
+      if (currentOrders[i]) ordersNode.appendChild(makeRow(currentOrders[i]));
+    }
+
+    updateTimers();
+  }
+
+  function updateTimers(){
+    var now = Date.now();
+    var timers = ordersNode.querySelectorAll(".time");
+
+    for (var i = 0; i < timers.length; i++){
+      var timer = timers[i];
+      var endsAt = Number(timer.getAttribute("data-ends-at") || 0);
+      var remainingMs = endsAt - now;
+      var remainingMinutes = remainingMs / 60000;
+      var row = timer.closest ? timer.closest(".order-row") : timer.parentNode.parentNode;
+
+      timer.textContent = remainingMs <= 0 ? "READY" : formatTime(remainingMs);
+      timer.style.color = timerColor(remainingMinutes);
+
+      if (row){
+        if (remainingMs <= 0 && remainingMs > -5 * 60 * 1000){
+          row.classList.add("ready");
+        } else {
+          row.classList.remove("ready");
+        }
+      }
+    }
+  }
+
+  function signature(list){
+    try{
+      return JSON.stringify((list || []).map(function(order){
+        return [
+          order.id,
+          order.orderNo,
+          order.prepMinutes,
+          order.endsAt,
+          order.expiresAt
+        ];
+      }));
+    }catch(_error){
+      return String(Date.now());
+    }
+  }
+
+  function requestOrders(callback){
+    try{
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", API_URL, true);
+      xhr.setRequestHeader("Accept", "application/json");
+
+      xhr.onreadystatechange = function(){
+        if (xhr.readyState !== 4) return;
+
+        if (xhr.status >= 200 && xhr.status < 300){
+          try{
+            callback(null, JSON.parse(xhr.responseText || "[]"));
+          }catch(error){
+            callback(error);
+          }
+        } else {
+          callback(new Error("HTTP " + xhr.status));
+        }
+      };
+
+      xhr.onerror = function(){
+        callback(new Error("NETWORK_ERROR"));
+      };
+
+      xhr.send(null);
+    }catch(error){
+      callback(error);
+    }
+  }
+
+  function poll(){
+    requestOrders(function(error, data){
+      if (error){
+        statusNode.textContent = "Offline / API error";
+        return;
+      }
+
+      var now = Date.now();
+      var list = Array.isArray(data) ? data : [];
+
+      // Сервер уже удаляет заказ через 5 минут после READY.
+      // Дополнительная фильтрация защищает экран от задержки обновления.
+      list = list.filter(function(order){
+        var expiresAt = Number(order.expiresAt || (Number(order.endsAt || 0) + 5 * 60 * 1000));
+        return !expiresAt || expiresAt > now;
+      });
+
+      var nextSignature = signature(list);
+
+      if (nextSignature !== lastSignature){
+        lastSignature = nextSignature;
+        currentOrders = list;
+        render();
+      }
+
+      updatedNode.textContent = "Updated: " + new Date().toLocaleString();
+      statusNode.textContent = "Online · Orders: " + list.length;
+      updateTimers();
+    });
+  }
+
+  render();
+  poll();
+  setInterval(updateTimers, TICK_MS);
+  setInterval(poll, POLL_MS);
+})();
+</script>
+</body>
+</html>`;
+}
+
+app.get("/courier", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(courierScreenHtml());
+});
+
+app.get("/rider", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(courierScreenHtml());
 });
 // ==========================
 // BOT
