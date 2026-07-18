@@ -5,6 +5,7 @@
 
 import express from "express";
 import http from "http";
+import https from "https";
 import crypto from "crypto";
 import { Telegraf, Markup, session } from "telegraf";
 import OpenAI from "openai";
@@ -16,6 +17,14 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+// Внешний адрес вашей чековой программы через ngrok.
+// Указывайте только базовый адрес, например:
+// https://xxxx.ngrok-free.app
+const GRAB_RECEIVER_URL = String(
+  process.env.GRAB_RECEIVER_URL ||
+    "https://6b6b-171-6-244-48.ngrok-free.app"
+).trim();
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
 if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
@@ -1286,6 +1295,135 @@ function cartToItems(cart) {
   }));
 }
 
+// ==========================
+// HIDDEN GRAB LABEL REQUEST
+// ==========================
+// Бот отправляет в чековую программу только номер GF-заказа.
+// Интерфейс бота и экранов не меняется.
+function grabEndpoint() {
+  const base = String(GRAB_RECEIVER_URL || "").trim();
+
+  if (!base) return "";
+
+  const withoutSlash = base.replace(/\/+$/, "");
+
+  if (
+    withoutSlash.endsWith("/grab") ||
+    withoutSlash.endsWith("/grab-label")
+  ) {
+    return withoutSlash;
+  }
+
+  return withoutSlash + "/grab";
+}
+
+function postJson(url, payload, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    let target;
+
+    try {
+      target = new URL(url);
+    } catch (error) {
+      reject(new Error("Invalid GRAB_RECEIVER_URL: " + error.message));
+      return;
+    }
+
+    const body = Buffer.from(JSON.stringify(payload), "utf8");
+    const transport = target.protocol === "https:" ? https : http;
+
+    const request = transport.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port || undefined,
+        path: target.pathname + target.search,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Content-Length": body.length,
+          "User-Agent": "SmokeFactory-GrabBot/1.0",
+        },
+        timeout: timeoutMs,
+      },
+      (response) => {
+        const chunks = [];
+
+        response.on("data", (chunk) => chunks.push(chunk));
+
+        response.on("end", () => {
+          const responseText = Buffer.concat(chunks).toString("utf8");
+          let data = null;
+
+          try {
+            data = responseText ? JSON.parse(responseText) : null;
+          } catch (_error) {
+            data = null;
+          }
+
+          if (
+            response.statusCode >= 200 &&
+            response.statusCode < 300
+          ) {
+            resolve(data || { ok: true });
+            return;
+          }
+
+          reject(
+            new Error(
+              "Grab receiver HTTP " +
+                response.statusCode +
+                ": " +
+                responseText
+            )
+          );
+        });
+      }
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error("Grab receiver timeout"));
+    });
+
+    request.on("error", reject);
+    request.write(body);
+    request.end();
+  });
+}
+
+async function sendGrabOrderNumber(orderNo) {
+  const number = String(orderNo || "").trim().toUpperCase();
+
+  // В чековую программу отправляются только реальные Grab-номера.
+  if (!/^GF-[0-9]+$/.test(number)) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "NOT_GRAB_NUMBER",
+    };
+  }
+
+  const endpoint = grabEndpoint();
+
+  if (!endpoint) {
+    console.error(
+      "GRAB RECEIVER ERROR: GRAB_RECEIVER_URL is not set"
+    );
+
+    return {
+      ok: false,
+      skipped: true,
+      reason: "GRAB_RECEIVER_URL_NOT_SET",
+    };
+  }
+
+  const result = await postJson(endpoint, {
+    order_number: number,
+  });
+
+  console.log("Grab label queued:", number, result);
+  return result;
+}
+
 function categoriesKeyboard() {
   const rows = [];
 
@@ -2192,6 +2330,17 @@ bot.action("send", async (ctx) => {
     return;
   }
 
+  try {
+    await sendGrabOrderNumber(st.orderNo);
+  } catch (error) {
+    // Ошибка этикетки не должна ломать отправку заказа на ТВ.
+    console.error(
+      "GRAB LABEL SEND ERROR:",
+      st.orderNo,
+      error
+    );
+  }
+
   await ctx.reply(
   "✅ Блюда появились на ТВ.",
   mainKeyboard()
@@ -2478,6 +2627,17 @@ bot.action("ocr_send_tv", async (ctx) => {
 
     resetState(st);
     return;
+  }
+
+  try {
+    await sendGrabOrderNumber(st.orderNo);
+  } catch (error) {
+    // Ошибка этикетки не должна ломать отправку заказа на ТВ.
+    console.error(
+      "GRAB LABEL SEND ERROR:",
+      st.orderNo,
+      error
+    );
   }
 
   await ctx.reply(
