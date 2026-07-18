@@ -235,6 +235,14 @@ app.delete("/api/orders/:id", (req, res) => {
 // SCREEN HTML
 // ==========================
 function screenHtml() {
+  const categoryByDish = {};
+
+  for (const [category, dishes] of Object.entries(MENU_BY_CAT)) {
+    for (const dish of dishes) {
+      categoryByDish[dish] = category;
+    }
+  }
+
   return `<!doctype html>
 <html lang="ru">
 <head>
@@ -251,6 +259,9 @@ function screenHtml() {
       --green:#00e676;
       --yellow:#ffd400;
       --red:#ff453a;
+      --purple:#c77dff;
+      --blue:#4da3ff;
+      --gold:#ffd54a;
       --ready:#aab2c2;
       --page-pad:12px;
       --gap:8px;
@@ -270,6 +281,30 @@ function screenHtml() {
       color:var(--text);
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
       overflow-x:hidden;
+    }
+
+    .warning-banner{
+      width:100%;
+      min-height:48px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      margin-bottom:8px;
+      padding:8px 86px 8px 16px;
+      border:2px solid rgba(255,213,74,.72);
+      border-radius:12px;
+      background:linear-gradient(180deg,rgba(87,43,19,.97),rgba(49,24,13,.97));
+      color:var(--gold);
+      font-size:clamp(16px,1.45vw,27px);
+      line-height:1.12;
+      font-weight:1000;
+      text-align:center;
+      text-transform:uppercase;
+      letter-spacing:.25px;
+      text-shadow:0 2px 8px rgba(0,0,0,.75);
+      box-shadow:
+        0 0 0 1px rgba(255,213,74,.16) inset,
+        0 7px 22px rgba(0,0,0,.28);
     }
 
     .language-button{
@@ -295,7 +330,7 @@ function screenHtml() {
     .stage{
       width:100%;
       min-height:100vh;
-      padding:58px var(--page-pad) var(--page-pad);
+      padding:12px var(--page-pad) var(--page-pad);
     }
 
     .orders{
@@ -307,7 +342,7 @@ function screenHtml() {
 
     .order-card{
       width:100%;
-      min-height:calc((100vh - 58px - var(--page-pad) - (var(--gap) * 9)) / 10);
+      min-height:calc((100vh - 84px - (var(--gap) * 9)) / 10);
       display:grid;
       grid-template-columns:minmax(110px,170px) minmax(0,1fr) var(--control-width);
       align-items:stretch;
@@ -363,6 +398,20 @@ function screenHtml() {
       overflow-wrap:anywhere;
     }
 
+    .dish-item{
+      display:inline;
+      font-weight:1000;
+      text-shadow:0 1px 5px rgba(0,0,0,.55);
+    }
+
+    .dish-item.cat-soups{color:#ffffff}
+    .dish-item.cat-mains{color:var(--yellow)}
+    .dish-item.cat-sides{color:var(--purple)}
+    .dish-item.cat-grill{color:var(--red)}
+    .dish-item.cat-salads{color:var(--green)}
+    .dish-item.cat-gastronomy{color:var(--blue)}
+    .dish-item.cat-unknown{color:#ffffff}
+
     .dish-separator{
       display:inline-block;
       margin:0 7px;
@@ -371,7 +420,8 @@ function screenHtml() {
     }
 
     .qty{
-      color:rgba(255,255,255,.72);
+      color:inherit;
+      opacity:.88;
       white-space:nowrap;
     }
 
@@ -462,6 +512,9 @@ function screenHtml() {
   <button class="language-button" id="language-button" type="button" aria-label="Switch language">ไทย</button>
 
   <main class="stage">
+    <div class="warning-banner">
+      ВНИМАТЕЛЬНО ПРОВЕРЬ ЗАКАЗ! ДВА РАЗА ПРОВЕРЬ КОМПЛЕКТАЦИЮ!
+    </div>
     <section class="orders" id="orders"></section>
   </main>
 
@@ -477,6 +530,12 @@ function screenHtml() {
   var currentLanguage = localStorage.getItem("kitchen-language") === "th" ? "th" : "ru";
   var currentOrders = [];
   var lastSignature = "";
+  var CATEGORY_BY_DISH = ${JSON.stringify(categoryByDish)};
+
+  var CATEGORY_BY_DISH_NORMALIZED = {};
+  Object.keys(CATEGORY_BY_DISH).forEach(function(name){
+    CATEGORY_BY_DISH_NORMALIZED[normalizeDishKey(name)] = CATEGORY_BY_DISH[name];
+  });
 
   var UI = {
     ru: {
@@ -605,9 +664,38 @@ function screenHtml() {
     return '<div class="cutlery no">' + esc(UI[currentLanguage].cutleryNo) + '</div>';
   }
 
+  function normalizeDishKey(value){
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .replace(/\\s+/g, " ");
+  }
+
+  function dishCategory(name){
+    var source = String(name || "").trim();
+    var normalized = normalizeDishKey(source);
+
+    if (CATEGORY_BY_DISH_NORMALIZED[normalized]){
+      return CATEGORY_BY_DISH_NORMALIZED[normalized];
+    }
+
+    if (/\\bS\\d+\\b/i.test(source)) return "soups";
+    if (/\\bM\\d+\\b/i.test(source)) return "mains";
+    if (/\\bG\\d+\\b/i.test(source)) return "grill";
+    if (/\\bT\\d+\\b/i.test(source)) return "salads";
+
+    return "unknown";
+  }
+
   function itemText(item){
+    var source = String(item && item.name || "").trim();
     var qty = Math.max(1, Number(item && item.qty || 1));
-    return esc(translateDish(item && item.name)) + ' <span class="qty">x' + qty + '</span>';
+    var category = dishCategory(source);
+
+    return '<span class="dish-item cat-' + esc(category) + '">' +
+      esc(translateDish(source)) +
+      ' <span class="qty">x' + qty + '</span></span>';
   }
 
   function dishLinesHtml(items){
