@@ -289,6 +289,26 @@ function screenHtml() {
       padding:58px var(--page-pad) var(--page-pad);
     }
 
+    .warning-banner{
+      display:none;
+      width:100%;
+      margin:0 0 8px;
+      padding:8px 72px 8px 12px;
+      border:1px solid rgba(255,212,0,.55);
+      border-radius:12px;
+      background:rgba(255,69,58,.16);
+      color:#ffd400;
+      text-align:center;
+      font-size:clamp(15px,1.35vw,25px);
+      line-height:1.15;
+      font-weight:1000;
+      letter-spacing:.25px;
+      text-transform:uppercase;
+      box-shadow:0 7px 20px rgba(0,0,0,.22);
+    }
+
+    .warning-banner.visible{display:block}
+
     .orders{
       width:100%;
       display:flex;
@@ -296,9 +316,21 @@ function screenHtml() {
       gap:var(--gap);
     }
 
+    .dish{
+      font-weight:1000;
+    }
+
+    .dish-soups{color:#ffffff}
+    .dish-grill{color:#ff453a}
+    .dish-salads{color:#35e06f}
+    .dish-mains{color:#ffd400}
+    .dish-sides{color:#c77dff}
+    .dish-gastronomy{color:#c88752}
+    .dish-unknown{color:#ffffff}
+
     .order-card{
       width:100%;
-      min-height:calc((100vh - 58px - var(--page-pad) - (var(--gap) * 9)) / 10);
+      min-height:calc((100vh - 58px - var(--page-pad) - 50px - (var(--gap) * 10)) / 10);
       display:grid;
       grid-template-columns:minmax(110px,170px) minmax(0,1fr) var(--control-width);
       align-items:stretch;
@@ -453,6 +485,7 @@ function screenHtml() {
   <button class="language-button" id="language-button" type="button" aria-label="Switch language">ไทย</button>
 
   <main class="stage">
+    <div class="warning-banner" id="warning-banner"></div>
     <section class="orders" id="orders"></section>
   </main>
 
@@ -463,6 +496,7 @@ function screenHtml() {
   "use strict";
 
   var ordersNode = document.getElementById("orders");
+  var warningBanner = document.getElementById("warning-banner");
   var languageButton = document.getElementById("language-button");
   var statusNode = document.getElementById("status");
   var currentLanguage = localStorage.getItem("kitchen-language") === "th" ? "th" : "ru";
@@ -478,7 +512,8 @@ function screenHtml() {
       deleteOrder: "Удалить заказ",
       apiOk: "Связь есть",
       apiError: "Ошибка связи",
-      orders: "Заказов"
+      orders: "Заказов",
+      warning: "ВНИМАТЕЛЬНО ПРОВЕРЬ ЗАКАЗ! ДВА РАЗА ПРОВЕРЬ КОМПЛЕКТАЦИЮ!"
     },
     th: {
       ready: "พร้อม",
@@ -488,7 +523,8 @@ function screenHtml() {
       deleteOrder: "ลบออเดอร์",
       apiOk: "เชื่อมต่อแล้ว",
       apiError: "การเชื่อมต่อผิดพลาด",
-      orders: "ออเดอร์"
+      orders: "ออเดอร์",
+      warning: "ตรวจสอบออเดอร์อย่างละเอียด! ตรวจสอบความครบถ้วนของรายการสองครั้ง!"
     }
   };
 
@@ -553,6 +589,72 @@ function screenHtml() {
     "Сrab T9":"สลัดปู T9"
   };
 
+  var DISH_CATEGORY = {
+    "Кур бульон S1":"soups",
+    "Борщ S2":"soups",
+    "Гороховый суп S3":"soups",
+    "Грибной суп S5":"soups",
+    "Окрошка S5":"soups",
+    "Солянка S4":"soups",
+
+    "Ребро варкоп":"gastronomy",
+    "Джерки":"gastronomy",
+
+    "Пельмени M1":"mains",
+    "Зраза M2":"mains",
+    "Драники M3":"mains",
+    "Карошка фри M4":"mains",
+    "Картошка фри M4":"mains",
+    "Картошка дольки M5":"mains",
+    "Мини чебуреки M6":"mains",
+    "Киевская - пюре M7":"mains",
+    "Киевская - дольки M8":"mains",
+    "Лепешка с рваной БИГ M9":"mains",
+    "Лепешка с рваной СМОЛ M10":"mains",
+    "Лепешка с картошкой БИГ M11":"mains",
+    "Лепешка с картошкой СМОЛ M12":"mains",
+    "Лепешка сыр БИГ M13":"mains",
+    "Лепешка сыр СМОЛ M14":"mains",
+    "Вареники M15":"mains",
+    "Бефстроганов M17":"mains",
+    "Фаршированный перец M18":"mains",
+    "Котлеты мясные M19":"mains",
+    "Котлеты куриные M20":"mains",
+    "Голубцы Тям M25":"mains",
+    "Туш капуста M24":"mains",
+
+    "Пелюстка":"sides",
+    "Соленое сало":"sides",
+    "Сметана":"sides",
+    "Лаваш":"sides",
+    "Кетчуп":"sides",
+    "Острая морковь":"sides",
+    "Бочковой огурец":"sides",
+    "Халапеньо":"sides",
+    "Корнишон":"sides",
+    "Свежий огурец":"sides",
+    "Майонез":"sides",
+
+    "Рёбра BBQ G1":"grill",
+    "Ребра BBQ G1":"grill",
+    "Шашлык свиной G2":"grill",
+    "Шашлык куриный G3":"grill",
+    "Куриный 2.0 G6":"grill",
+    "Кебаб свин-гов G4":"grill",
+    "Кебаб курица G5":"grill",
+    "Wings кур G7":"grill",
+
+    "Столичный T1":"salads",
+    "Деревенский T2":"salads",
+    "Обжорка T3":"salads",
+    "Цезарь T4":"salads",
+    "Овощ Смет T6":"salads",
+    "Овощ Майо T7":"salads",
+    "Овощ Масло T8":"salads",
+    "Баклажаны T5":"salads",
+    "Сrab T9":"salads"
+  };
+
   function esc(value){
     return String(value == null ? "" : value)
       .replace(/&/g,"&amp;")
@@ -597,8 +699,13 @@ function screenHtml() {
   }
 
   function itemText(item){
+    var sourceName = String(item && item.name || "").trim();
     var qty = Math.max(1, Number(item && item.qty || 1));
-    return esc(translateDish(item && item.name)) + ' <span class="qty">x' + qty + '</span>';
+    var category = DISH_CATEGORY[sourceName] || "unknown";
+
+    return '<span class="dish dish-' + esc(category) + '">' +
+      esc(translateDish(sourceName)) +
+      '</span> <span class="qty">x' + qty + '</span>';
   }
 
   function dishLinesHtml(items){
@@ -645,6 +752,10 @@ function screenHtml() {
 
   function render(){
     ordersNode.innerHTML = "";
+
+    var hasOrders = currentOrders.length > 0;
+    warningBanner.textContent = UI[currentLanguage].warning;
+    warningBanner.classList.toggle("visible", hasOrders);
 
     for (var i = 0; i < currentOrders.length; i++){
       if (currentOrders[i]) ordersNode.appendChild(makeCard(currentOrders[i]));
