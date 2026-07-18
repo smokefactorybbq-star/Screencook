@@ -204,6 +204,24 @@ app.get("/api/orders", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(orders);
 });
+
+app.delete("/api/orders/:id", (req, res) => {
+  const orderId = String(req.params.id || "").trim();
+
+  if (!orderId) {
+    return res.status(400).json({ ok: false, error: "ORDER_ID_REQUIRED" });
+  }
+
+  const before = orders.length;
+  deleteKitchenOrder(orderId);
+  const deleted = orders.length < before;
+
+  res.setHeader("Cache-Control", "no-store");
+  return res.status(deleted ? 200 : 404).json({
+    ok: deleted,
+    id: orderId,
+  });
+});
 // ==========================
 // SCREEN HTML
 // ==========================
@@ -213,446 +231,560 @@ function screenHtml() {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Screen</title>
+  <title>Kitchen Screen</title>
   <style>
     :root{
       --bg:#050813;
-      --cell:#0f1730;
-      --border:rgba(255,255,255,.12);
-      --text:#ffffff;
-
-      --green:#00ff66;
+      --card:#0f1730;
+      --border:rgba(255,255,255,.15);
+      --text:#fff;
+      --muted:rgba(255,255,255,.62);
+      --green:#00e676;
       --yellow:#ffd400;
-      --red:#ff3b30;
+      --red:#ff453a;
       --ready:#aab2c2;
-
-      --safe: 40px;
-      --gap: 10px;
-
-      --item-font: 14px;
-      --item-line: 1.05;
-      --item-pad-v: 4px;
-      --item-pad-h: 8px;
-      --item-gap: 6px;
-      --item-radius: 12px;
+      --page-pad:12px;
+      --gap:8px;
+      --control-width:170px;
     }
 
-    *{ box-sizing:border-box; }
+    *{box-sizing:border-box}
 
     html,body{
       width:100%;
-      height:100%;
+      min-height:100%;
       margin:0;
     }
 
     body{
       background:var(--bg);
       color:var(--text);
-      overflow:hidden;
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      overflow-x:hidden;
     }
+
+    .language-button{
+      position:fixed;
+      top:10px;
+      right:12px;
+      z-index:1000;
+      min-width:58px;
+      height:40px;
+      padding:0 12px;
+      border:1px solid rgba(255,255,255,.22);
+      border-radius:12px;
+      background:rgba(15,23,48,.96);
+      color:#fff;
+      font-size:16px;
+      font-weight:900;
+      cursor:pointer;
+      box-shadow:0 8px 24px rgba(0,0,0,.3);
+    }
+
+    .language-button:active{transform:scale(.97)}
 
     .stage{
-      position:fixed;
-      left:var(--safe);
-      right:var(--safe);
-      top:var(--safe);
-      bottom:var(--safe);
-      overflow:hidden;
-    }
-
-    .wrap{
       width:100%;
-      height:100%;
-      display:flex;
-      flex-wrap:wrap;
-      align-content:stretch;
-      justify-content:space-between;
-      gap: var(--gap);
+      min-height:100vh;
+      padding:58px var(--page-pad) var(--page-pad);
     }
 
-    .card{
-      width: calc((100% - (var(--gap) * 4)) / 5);
-      height: calc((100% - var(--gap)) / 2);
-      background:var(--cell);
+    .orders{
+      width:100%;
+      display:flex;
+      flex-direction:column;
+      gap:var(--gap);
+    }
+
+    .order-card{
+      width:100%;
+      min-height:calc((100vh - 58px - var(--page-pad) - (var(--gap) * 9)) / 10);
+      display:grid;
+      grid-template-columns:minmax(110px,170px) minmax(0,1fr) var(--control-width);
+      align-items:stretch;
+      background:var(--card);
       border:1px solid var(--border);
-      border-radius:18px;
+      border-radius:12px;
       overflow:hidden;
-      display:flex;
-      flex-direction:column;
-      min-width:0;
-      min-height:0;
-      box-shadow:0 12px 30px rgba(0,0,0,.35);
+      box-shadow:0 7px 20px rgba(0,0,0,.25);
     }
 
-    .top{
-      flex:0 0 auto;
-      padding: 14px 16px 10px;
-      border-bottom:1px solid rgba(255,255,255,.10);
-      display:flex;
-      align-items:flex-end;
-      justify-content:space-between;
-      gap: 10px;
-      min-height:0;
+    .order-card.blink{animation:blink .9s steps(2,end) infinite}
+
+    @keyframes blink{
+      0%{filter:brightness(1)}
+      50%{filter:brightness(1.55)}
+      100%{filter:brightness(1)}
     }
 
-    .orderNo{
-      flex:1 1 auto;
-      min-width:0;
-      font-weight:1000;
-      line-height:1.05;
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      font-size: clamp(16px, 1.25vw, 34px);
-    }
-
-    .remain{
-      flex:0 0 auto;
-      font-weight:1000;
-      line-height:1;
-      white-space:nowrap;
-      font-size: clamp(16px, 1.15vw, 32px);
-      font-variant-numeric: tabular-nums;
-      letter-spacing: 0.5px;
-    }
-
-    .cutlery{
-      flex:0 0 auto;
-      padding: 2px 16px 0;
-      font-weight: 1000;
-      font-size: 14px;
-      letter-spacing: .2px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .cutlery.green{ color: var(--green); }
-    .cutlery.red{ color: var(--red); }
-
-    .items{
-      flex:1 1 auto;
-      padding: 10px 12px 12px;
-      overflow:hidden;
-      min-height:0;
-      display:flex;
-      flex-direction:column;
-      gap: var(--item-gap);
-    }
-
-    .item{
+    .order-number{
       display:flex;
       align-items:center;
-      gap: 8px;
-      padding: var(--item-pad-v) var(--item-pad-h);
-      border:1px solid rgba(255,255,255,.10);
-      border-radius: var(--item-radius);
-      background: rgba(255,255,255,.03);
-      min-width:0;
-    }
-
-    .name{
-      flex:1 1 auto;
-      min-width:0;
-      font-weight:950;
-      line-height: var(--item-line);
+      padding:8px 12px;
+      border-right:1px solid rgba(255,255,255,.1);
+      font-size:clamp(16px,1.45vw,28px);
+      line-height:1;
+      font-weight:1000;
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
-      font-size: var(--item-font);
+    }
+
+    .order-content{
+      min-width:0;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      gap:5px;
+      padding:7px 12px;
+    }
+
+    .dish-lines{
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+      min-width:0;
+    }
+
+    .dish-line{
+      min-width:0;
+      font-size:clamp(14px,1.15vw,22px);
+      line-height:1.2;
+      font-weight:900;
+      overflow-wrap:anywhere;
+    }
+
+    .dish-separator{
+      display:inline-block;
+      margin:0 7px;
+      color:rgba(255,255,255,.38);
+      font-weight:700;
     }
 
     .qty{
-      flex:0 0 auto;
-      font-weight:1000;
-      color: rgba(255,255,255,.75);
+      color:rgba(255,255,255,.72);
       white-space:nowrap;
-      font-size: var(--item-font);
-      line-height: var(--item-line);
-      font-variant-numeric: tabular-nums;
     }
 
-    .placeholder{
-      flex:1 1 auto;
+    .empty-items{
+      color:var(--muted);
+      font-size:14px;
+      font-weight:800;
+    }
+
+    .cutlery{
+      font-size:12px;
+      line-height:1.1;
+      font-weight:1000;
+    }
+
+    .cutlery.yes{color:var(--green)}
+    .cutlery.no{color:var(--red)}
+
+    .order-controls{
+      position:relative;
+      min-width:0;
       display:flex;
       align-items:center;
       justify-content:center;
-      color:rgba(255,255,255,.28);
+      padding:7px 42px 7px 10px;
+      border-left:1px solid rgba(255,255,255,.1);
+    }
+
+    .timer{
+      font-size:clamp(19px,1.75vw,34px);
+      line-height:1;
       font-weight:1000;
-      text-align:center;
-      padding: 10px;
-      font-size: 18px;
-    }
-
-    .more{
-      margin-top:auto;
-      padding: 6px 10px;
-      border:1px dashed rgba(255,255,255,.18);
-      border-radius: 12px;
-      color: rgba(255,255,255,.65);
-      font-weight: 900;
-      font-size: 13px;
+      font-variant-numeric:tabular-nums;
       white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      background: rgba(0,0,0,.18);
+      letter-spacing:.4px;
     }
 
-    .blink{
-      animation: blink 0.9s steps(2,end) infinite;
+    .delete-button{
+      position:absolute;
+      top:5px;
+      right:6px;
+      width:30px;
+      height:30px;
+      display:grid;
+      place-items:center;
+      padding:0;
+      border:0;
+      border-radius:8px;
+      background:transparent;
+      color:rgba(255,255,255,.72);
+      font-size:25px;
+      line-height:1;
+      font-weight:500;
+      cursor:pointer;
     }
 
-    @keyframes blink{
-      0%{ filter:brightness(1); }
-      50%{ filter:brightness(1.6); }
-      100%{ filter:brightness(1); }
+    .delete-button:hover{
+      background:rgba(255,69,58,.18);
+      color:#fff;
     }
 
-    .dbg{
+    .delete-button:disabled{opacity:.35;cursor:default}
+
+    .status{
       position:fixed;
       left:10px;
-      bottom:10px;
-      font-size:12px;
-      font-weight:900;
-      color:rgba(255,255,255,.65);
-      background: rgba(0,0,0,.25);
-      border:1px solid rgba(255,255,255,.12);
-      padding:8px 10px;
-      border-radius:12px;
-      z-index:9999;
-      white-space:pre-wrap;
+      bottom:8px;
+      z-index:1000;
+      padding:4px 7px;
+      border-radius:8px;
+      background:rgba(0,0,0,.28);
+      color:rgba(255,255,255,.42);
+      font-size:10px;
+      font-weight:800;
       pointer-events:none;
+    }
+
+    @media (max-width:900px){
+      :root{--control-width:130px}
+      .order-card{grid-template-columns:110px minmax(0,1fr) var(--control-width)}
+      .order-number{padding:7px 9px}
+      .order-content{padding:7px 9px}
+      .dish-separator{margin:0 4px}
     }
   </style>
 </head>
 <body>
-  <div class="stage">
-    <div class="wrap" id="wrap"></div>
-  </div>
-  <div class="dbg" id="dbg">BOOT</div>
+  <button class="language-button" id="language-button" type="button" aria-label="Switch language">ไทย</button>
+
+  <main class="stage">
+    <section class="orders" id="orders"></section>
+  </main>
+
+  <div class="status" id="status">BOOT</div>
+
 <script>
 (function(){
-  var wrap = document.getElementById('wrap');
-  var dbg = document.getElementById('dbg');
+  "use strict";
 
-  var TOTAL = 10;
-  var MAX_ITEMS = 15;
+  var ordersNode = document.getElementById("orders");
+  var languageButton = document.getElementById("language-button");
+  var statusNode = document.getElementById("status");
+  var currentLanguage = localStorage.getItem("kitchen-language") === "th" ? "th" : "ru";
+  var currentOrders = [];
+  var lastSignature = "";
 
-  var lastSig = "";
-  var hasRenderedOnce = false;
+  var UI = {
+    ru: {
+      ready: "ГОТОВО",
+      noItems: "Блюда пока не добавлены",
+      cutleryYes: "Приборы нужны",
+      cutleryNo: "Приборы не нужны",
+      deleteOrder: "Удалить заказ",
+      apiOk: "Связь есть",
+      apiError: "Ошибка связи",
+      orders: "Заказов"
+    },
+    th: {
+      ready: "พร้อม",
+      noItems: "ยังไม่ได้เพิ่มรายการอาหาร",
+      cutleryYes: "ต้องการช้อนส้อม",
+      cutleryNo: "ไม่ต้องการช้อนส้อม",
+      deleteOrder: "ลบออเดอร์",
+      apiOk: "เชื่อมต่อแล้ว",
+      apiError: "การเชื่อมต่อผิดพลาด",
+      orders: "ออเดอร์"
+    }
+  };
 
-  function esc(s){
-    s = String(s || "");
-    return s.replace(/</g,"&lt;");
+  var DISH_TH = {
+    "Кур бульон S1":"ซุปไก่ S1",
+    "Борщ S2":"บอร์ช S2",
+    "Гороховый суп S3":"ซุปถั่วลันเตา S3",
+    "Грибной суп S5":"ซุปเห็ด S5",
+    "Окрошка S5":"โอโครชกา S5",
+    "Солянка S4":"ซุปโซลยังกา S4",
+    "Ребро варкоп":"ซี่โครงรมควันต้ม",
+    "Джерки":"เนื้อเจอร์กี",
+    "Пельмени M1":"เกี๊ยวรัสเซีย M1",
+    "Зраза M2":"ซราซี M2",
+    "Драники M3":"แพนเค้กมันฝรั่ง M3",
+    "Карошка фри M4":"เฟรนช์ฟรายส์ M4",
+    "Картошка фри M4":"เฟรนช์ฟรายส์ M4",
+    "Картошка дольки M5":"มันฝรั่งเวดจ์ M5",
+    "Мини чебуреки M6":"เชบูเรกีชิ้นเล็ก M6",
+    "Киевская - пюре M7":"ไก่เคียฟกับมันบด M7",
+    "Киевская - дольки M8":"ไก่เคียฟกับมันฝรั่งเวดจ์ M8",
+    "Лепешка с рваной БИГ M9":"แผ่นแป้งเนื้อฉีก ใหญ่ M9",
+    "Лепешка с рваной СМОЛ M10":"แผ่นแป้งเนื้อฉีก เล็ก M10",
+    "Лепешка с картошкой БИГ M11":"แผ่นแป้งไส้มันฝรั่ง ใหญ่ M11",
+    "Лепешка с картошкой СМОЛ M12":"แผ่นแป้งไส้มันฝรั่ง เล็ก M12",
+    "Лепешка сыр БИГ M13":"แผ่นแป้งชีส ใหญ่ M13",
+    "Лепешка сыр СМОЛ M14":"แผ่นแป้งชีส เล็ก M14",
+    "Вареники M15":"วาเรนีกี M15",
+    "Бефстроганов M17":"บีฟสโตรกานอฟ M17",
+    "Фаршированный перец M18":"พริกหวานยัดไส้ M18",
+    "Котлеты мясные M19":"เนื้อบดทอด M19",
+    "Котлеты куриные M20":"ไก่บดทอด M20",
+    "Голубцы Тям M25":"กะหล่ำปลียัดไส้ M25",
+    "Туш капуста M24":"กะหล่ำปลีตุ๋น M24",
+    "Пелюстка":"กะหล่ำปลีดองบีตรูต",
+    "Соленое сало":"มันหมูเค็ม",
+    "Сметана":"ซาวร์ครีม",
+    "Лаваш":"ลาวาช",
+    "Кетчуп":"ซอสมะเขือเทศ",
+    "Острая морковь":"แครอทรสเผ็ด",
+    "Бочковой огурец":"แตงกวาดองถัง",
+    "Халапеньо":"ฮาลาปิโน",
+    "Корнишон":"แตงกวาดองลูกเล็ก",
+    "Свежий огурец":"แตงกวาสด",
+    "Майонез":"มายองเนส",
+    "Рёбра BBQ G1":"ซี่โครง BBQ G1",
+    "Ребра BBQ G1":"ซี่โครง BBQ G1",
+    "Шашлык свиной G2":"ชาชลิกหมู G2",
+    "Шашлык куриный G3":"ชาชลิกไก่ G3",
+    "Куриный 2.0 G6":"ไก่ 2.0 G6",
+    "Кебаб свин-гов G4":"เคบับหมู-เนื้อ G4",
+    "Кебаб курица G5":"เคบับไก่ G5",
+    "Wings кур G7":"ปีกไก่ G7",
+    "Столичный T1":"สลัดสโตลิชนี T1",
+    "Деревенский T2":"สลัดชนบท T2",
+    "Обжорка T3":"สลัดออบชอร์กา T3",
+    "Цезарь T4":"ซีซาร์สลัด T4",
+    "Овощ Смет T6":"สลัดผักซาวร์ครีม T6",
+    "Овощ Майо T7":"สลัดผักมายองเนส T7",
+    "Овощ Масло T8":"สลัดผักน้ำมัน T8",
+    "Баклажаны T5":"มะเขือยาวทอด T5",
+    "Сrab T9":"สลัดปู T9"
+  };
+
+  function esc(value){
+    return String(value == null ? "" : value)
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;")
+      .replace(/'/g,"&#039;");
   }
 
-  function pad2(n){
-    n = String(n);
-    return (n.length < 2) ? ("0" + n) : n;
+  function translateDish(name){
+    var source = String(name || "").trim();
+    if (currentLanguage !== "th") return source;
+    return DISH_TH[source] || source;
   }
 
-  function mmss(ms){
-    var s = Math.max(0, Math.floor(ms / 1000));
-    var m = Math.floor(s / 60);
-    var ss = s % 60;
-    return String(m) + ":" + pad2(ss);
+  function pad2(value){
+    var text = String(value);
+    return text.length < 2 ? "0" + text : text;
   }
 
-  function remainColor(remMin){
-    if (remMin <= 0) return "var(--ready)";
-    if (remMin <= 10) return "var(--red)";
-    if (remMin <= 25) return "var(--yellow)";
+  function formatTimer(ms){
+    var seconds = Math.max(0, Math.floor(ms / 1000));
+    var minutes = Math.floor(seconds / 60);
+    return String(minutes) + ":" + pad2(seconds % 60);
+  }
+
+  function timerColor(remainingMinutes){
+    if (remainingMinutes <= 0) return "var(--ready)";
+    if (remainingMinutes <= 10) return "var(--red)";
+    if (remainingMinutes <= 25) return "var(--yellow)";
     return "var(--green)";
   }
 
-  function cutleryHtml(o){
-    if (!o || (o.cutlery !== true && o.cutlery !== false)) return "";
+  function cutleryHtml(order){
+    if (!order || (order.cutlery !== true && order.cutlery !== false)) return "";
 
-    if (o.cutlery === true){
-      return '<div class="cutlery green">Cutlery required</div>';
+    if (order.cutlery === true){
+      return '<div class="cutlery yes">' + esc(UI[currentLanguage].cutleryYes) + '</div>';
     }
 
-    return '<div class="cutlery red">Dont need cutlery</div>';
+    return '<div class="cutlery no">' + esc(UI[currentLanguage].cutleryNo) + '</div>';
   }
 
-  function makeCard(o){
-    var card = document.createElement("div");
-    card.className = "card";
+  function itemText(item){
+    var qty = Math.max(1, Number(item && item.qty || 1));
+    return esc(translateDish(item && item.name)) + ' <span class="qty">x' + qty + '</span>';
+  }
 
-    if (!o){
-      card.innerHTML = '<div class="placeholder">—</div>';
-      return card;
+  function dishLinesHtml(items){
+    if (!Array.isArray(items) || !items.length){
+      return '<div class="empty-items">' + esc(UI[currentLanguage].noItems) + '</div>';
     }
 
-    var items = (o.items && o.items.length) ? o.items : null;
-    var itemsHtml = "";
+    var html = '<div class="dish-lines">';
 
-    if (items){
-      var shown = 0;
+    for (var start = 0; start < items.length; start += 10){
+      var group = items.slice(start, start + 10);
+      html += '<div class="dish-line">';
 
-      for (var i = 0; i < items.length && shown < MAX_ITEMS; i++){
-        var it = items[i] || {};
-        var name = esc(it.name);
-        var qty = Number(it.qty || 0);
-
-        itemsHtml +=
-          '<div class="item">' +
-            '<div class="name">' + name + '</div>' +
-            '<div class="qty">x' + qty + '</div>' +
-          '</div>';
-
-        shown++;
+      for (var i = 0; i < group.length; i++){
+        if (i > 0) html += '<span class="dish-separator">/</span>';
+        html += itemText(group[i]);
       }
 
-      if (items.length > MAX_ITEMS){
-        var rest = items.length - MAX_ITEMS;
-        itemsHtml += '<div class="more">+ ещё ' + rest + ' поз.</div>';
-      }
-    } else {
-      itemsHtml = '<div class="placeholder">Выбор блюд…</div>';
+      html += '</div>';
     }
+
+    html += '</div>';
+    return html;
+  }
+
+  function makeCard(order){
+    var card = document.createElement("article");
+    card.className = "order-card";
+    card.setAttribute("data-order-id", String(order.id || ""));
 
     card.innerHTML =
-      '<div class="top">' +
-        '<div class="orderNo">' + esc(o.orderNo || "—") + '</div>' +
-        '<div class="remain" data-endsat="' + (o.endsAt || 0) + '">--:--</div>' +
+      '<div class="order-number">' + esc(order.orderNo || "—") + '</div>' +
+      '<div class="order-content">' +
+        dishLinesHtml(order.items || []) +
+        cutleryHtml(order) +
       '</div>' +
-      cutleryHtml(o) +
-      '<div class="items">' + itemsHtml + '</div>';
+      '<div class="order-controls">' +
+        '<div class="timer" data-ends-at="' + Number(order.endsAt || 0) + '">--:--</div>' +
+        '<button class="delete-button" type="button" data-delete-id="' + esc(order.id || "") + '" aria-label="' + esc(UI[currentLanguage].deleteOrder) + '">×</button>' +
+      '</div>';
 
     return card;
   }
 
-  function render(list){
-    wrap.innerHTML = "";
+  function render(){
+    ordersNode.innerHTML = "";
 
-    for (var i = 0; i < TOTAL; i++){
-      var o = (list && list[i]) ? list[i] : null;
-      wrap.appendChild(makeCard(o));
+    for (var i = 0; i < currentOrders.length; i++){
+      if (currentOrders[i]) ordersNode.appendChild(makeCard(currentOrders[i]));
     }
 
-    hasRenderedOnce = true;
+    document.documentElement.lang = currentLanguage === "th" ? "th" : "ru";
+    languageButton.textContent = currentLanguage === "ru" ? "ไทย" : "RU";
     updateTimers();
   }
 
   function updateTimers(){
-    if (!hasRenderedOnce) return;
-
     var now = Date.now();
-    var nodes = wrap.querySelectorAll(".remain");
+    var timers = ordersNode.querySelectorAll(".timer");
 
-    for (var i = 0; i < nodes.length; i++){
-      var el = nodes[i];
-      var endsAt = Number(el.getAttribute("data-endsat") || 0);
+    for (var i = 0; i < timers.length; i++){
+      var timer = timers[i];
+      var endsAt = Number(timer.getAttribute("data-ends-at") || 0);
+      var remainingMs = endsAt - now;
+      var remainingMinutes = remainingMs / 60000;
 
-      if (!endsAt){
-        el.textContent = "--:--";
-        el.style.color = "rgba(255,255,255,.35)";
-        continue;
-      }
+      timer.textContent = remainingMs <= 0 ? UI[currentLanguage].ready : formatTimer(remainingMs);
+      timer.style.color = timerColor(remainingMinutes);
 
-      var remMs = endsAt - now;
-      var remMin = remMs / 60000;
-      var color = remainColor(remMin);
+      var card = timer.closest ? timer.closest(".order-card") : timer.parentNode.parentNode;
+      if (!card) continue;
 
-      el.textContent = (remMs <= 0) ? "READY" : mmss(remMs);
-      el.style.color = color;
-
-      var card = el;
-
-      while (card && (!card.className || card.className.indexOf("card") === -1)) {
-        card = card.parentNode;
-      }
-
-      if (card){
-        if (remMs > 0 && remMs <= 5 * 60 * 1000){
-          if (card.className.indexOf("blink") === -1) {
-            card.className = "card blink";
-          }
-        } else {
-          card.className = "card";
-        }
+      if (remainingMs > 0 && remainingMs <= 5 * 60 * 1000){
+        card.classList.add("blink");
+      } else {
+        card.classList.remove("blink");
       }
     }
   }
 
-  function xhrJson(url, cb){
+  function requestJson(method, url, callback){
     try{
-      var x = new XMLHttpRequest();
-      x.open("GET", url, true);
+      var xhr = new XMLHttpRequest();
+      xhr.open(method, url, true);
+      xhr.setRequestHeader("Accept", "application/json");
 
-      x.onreadystatechange = function(){
-        if (x.readyState === 4){
-          if (x.status >= 200 && x.status < 300){
-            try{
-              var data = JSON.parse(x.responseText);
-              cb(null, data);
-            }catch(e){
-              cb(new Error("JSON parse error"));
-            }
-          } else {
-            cb(new Error("HTTP " + x.status));
-          }
+      xhr.onreadystatechange = function(){
+        if (xhr.readyState !== 4) return;
+
+        var data = null;
+        try{ data = xhr.responseText ? JSON.parse(xhr.responseText) : null; }catch(_e){}
+
+        if (xhr.status >= 200 && xhr.status < 300){
+          callback(null, data);
+        } else {
+          callback(new Error("HTTP " + xhr.status), data);
         }
       };
 
-      x.send(null);
-    }catch(e){
-      cb(e);
+      xhr.onerror = function(){ callback(new Error("NETWORK_ERROR")); };
+      xhr.send(null);
+    }catch(error){
+      callback(error);
     }
   }
 
   function signature(list){
     try{
-      var slim = (list || []).slice(0, TOTAL).map(function(o){
-        if (!o) return null;
-
+      return JSON.stringify((list || []).map(function(order){
         return {
-          id: o.id,
-          orderNo: o.orderNo,
-          endsAt: o.endsAt,
-          cutlery: o.cutlery,
-          items: (o.items || []).slice(0, MAX_ITEMS).map(function(it){
-            return [it.name, it.qty];
-          }),
-          itemsLen: (o.items || []).length
+          id:order.id,
+          orderNo:order.orderNo,
+          endsAt:order.endsAt,
+          cutlery:order.cutlery,
+          items:(order.items || []).map(function(item){return [item.name,item.qty];})
         };
-      });
-
-      return JSON.stringify(slim);
-    }catch(e){
+      }));
+    }catch(_error){
       return String(Date.now());
     }
   }
 
   function poll(){
-    xhrJson("/api/orders", function(err, data){
-      if (err){
-        dbg.textContent = "API ERROR\\n" + String(err.message || err);
+    requestJson("GET", "/api/orders", function(error, data){
+      if (error){
+        statusNode.textContent = UI[currentLanguage].apiError;
         return;
       }
 
-      var list = data || [];
-      var sig = signature(list);
+      var list = Array.isArray(data) ? data : [];
+      var nextSignature = signature(list);
 
-      if (sig !== lastSig){
-        lastSig = sig;
-        render(list);
+      if (nextSignature !== lastSignature){
+        lastSignature = nextSignature;
+        currentOrders = list;
+        render();
       }
 
-      dbg.textContent = "API OK\\nORDERS: " + (list && list.length ? list.length : 0);
+      statusNode.textContent = UI[currentLanguage].apiOk + " · " + UI[currentLanguage].orders + ": " + list.length;
     });
   }
 
-  setInterval(updateTimers, 1000);
+  function removeOrder(orderId, button){
+    if (!orderId || !button) return;
+
+    button.disabled = true;
+
+    requestJson("DELETE", "/api/orders/" + encodeURIComponent(orderId), function(error){
+      if (error){
+        button.disabled = false;
+        statusNode.textContent = UI[currentLanguage].apiError;
+        return;
+      }
+
+      currentOrders = currentOrders.filter(function(order){
+        return String(order.id) !== String(orderId);
+      });
+      lastSignature = signature(currentOrders);
+      render();
+    });
+  }
+
+  languageButton.addEventListener("click", function(){
+    currentLanguage = currentLanguage === "ru" ? "th" : "ru";
+    localStorage.setItem("kitchen-language", currentLanguage);
+    render();
+    statusNode.textContent = UI[currentLanguage].apiOk + " · " + UI[currentLanguage].orders + ": " + currentOrders.length;
+  });
+
+  ordersNode.addEventListener("click", function(event){
+    var button = event.target.closest ? event.target.closest("[data-delete-id]") : null;
+    if (!button) return;
+    removeOrder(button.getAttribute("data-delete-id"), button);
+  });
+
+  render();
+  updateTimers();
   poll();
+  setInterval(updateTimers, 1000);
   setInterval(poll, 2500);
 })();
 </script>
 </body>
 </html>`;
 }
+
 app.get("/", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
