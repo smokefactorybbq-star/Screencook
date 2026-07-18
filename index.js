@@ -1298,7 +1298,7 @@ function cartToItems(cart) {
 // ==========================
 // HIDDEN GRAB LABEL REQUEST
 // ==========================
-// Бот отправляет в чековую программу только номер GF-заказа.
+// Бот отправляет в чековую программу номер заказа GF-* или SM-*.
 // Интерфейс бота и экранов не меняется.
 function grabEndpoint() {
   const base = String(GRAB_RECEIVER_URL || "").trim();
@@ -1393,12 +1393,12 @@ function postJson(url, payload, timeoutMs = 15000) {
 async function sendGrabOrderNumber(orderNo) {
   const number = String(orderNo || "").trim().toUpperCase();
 
-  // В чековую программу отправляются только реальные Grab-номера.
-  if (!/^GF-[0-9]+$/.test(number)) {
+  // В чековую программу отправляются номера GF-* и SM-*.
+  if (!/^(?:GF|SM)-[0-9]+$/.test(number)) {
     return {
       ok: true,
       skipped: true,
-      reason: "NOT_GRAB_NUMBER",
+      reason: "UNSUPPORTED_LABEL_NUMBER",
     };
   }
 
