@@ -23,7 +23,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // https://xxxx.ngrok-free.app
 const GRAB_RECEIVER_URL = String(
   process.env.GRAB_RECEIVER_URL ||
-    "https://d4e6-171-6-244-48.ngrok-free.app"
+    "https://84ae-171-6-239-0.ngrok-free.app"
 ).trim();
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
