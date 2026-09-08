@@ -17,7 +17,10 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const SCREEN_SERVICE_SECRET = String(process.env.SCREEN_SERVICE_SECRET || "").trim();
+const DEFAULT_SCREEN_SERVICE_SECRET = "SmokeFactoryScreenBridge_2026_v1";
+const SCREEN_SERVICE_SECRET = String(
+  process.env.SCREEN_SERVICE_SECRET || DEFAULT_SCREEN_SERVICE_SECRET
+).trim();
 
 // Внешний адрес вашей чековой программы через ngrok.
 // Указывайте только базовый адрес, например:
@@ -219,6 +222,9 @@ app.get("/health", (_req, res) => {
     ok: true,
     service: "smoke-screen-service",
     secretConfigured: Boolean(SCREEN_SERVICE_SECRET),
+    bridgeReady: true,
+    kitchenUrl: "/screen.html",
+    courierUrl: "/courier.html",
     activeOrders: orders.length,
   });
 });
@@ -228,7 +234,14 @@ app.get("/health", (_req, res) => {
 // endpoint private while preserving the existing manual Telegram workflow.
 app.post("/api/external-order", (req, res) => {
   const supplied = String(req.get("X-Screen-Secret") || "");
-  if (!SCREEN_SERVICE_SECRET || supplied !== SCREEN_SERVICE_SECRET) {
+  const configured = String(process.env.SCREEN_SERVICE_SECRET || "").trim();
+  const acceptedSecrets = new Set([
+    DEFAULT_SCREEN_SERVICE_SECRET,
+    SCREEN_SERVICE_SECRET,
+    configured,
+  ].filter(Boolean));
+
+  if (!acceptedSecrets.has(supplied)) {
     console.warn("EXTERNAL ORDER REJECTED: bad/missing X-Screen-Secret");
     return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
   }
@@ -683,7 +696,54 @@ function screenHtml() {
     "Овощ Майо T7":"สลัดผักมายองเนส T7",
     "Овощ Масло T8":"สลัดผักน้ำมัน T8",
     "Баклажаны T5":"มะเขือยาวทอด T5",
-    "Сrab T9":"สลัดปู T9"
+    "Сrab T9":"สลัดปู T9",
+
+    // Названия из сайта SmokeFactory / Mini App без внутренних кодов
+    "Борщ":"บอร์ช",
+    "Солянка":"ซุปโซลยังกา",
+    "Гороховый суп":"ซุปถั่วลันเตา",
+    "Грибной суп":"ซุปเห็ด",
+    "Окрошка":"โอโครชกา",
+    "Куриный суп":"ซุปไก่",
+    "Пельмени":"เกี๊ยวรัสเซีย",
+    "Вареники с картошкой и беконом":"วาเรนีกีมันฝรั่งและเบคอน",
+    "Котлеты куриные":"ไก่บดทอด",
+    "Котлеты из домашнего фарша":"เนื้อบดทอด",
+    "Перец фаршированный":"พริกหวานยัดไส้",
+    "Бефстроганов":"บีฟสโตรกานอฟ",
+    "Котлета по-киевски":"ไก่เคียฟ",
+    "Зраза":"ซราซี",
+    "Драники":"แพนเค้กมันฝรั่ง",
+    "Ленивые голубцы Том ям":"กะหล่ำปลียัดไส้ต้มยำ",
+    "Картошка фри":"เฟรนช์ฟรายส์",
+    "Картошка дольками":"มันฝรั่งเวดจ์",
+    "Мини чебуреки":"เชบูเรกีชิ้นเล็ก",
+    "Лепешка с сыром":"แผ่นแป้งชีส",
+    "Лепешка с картошкой":"แผ่นแป้งไส้มันฝรั่ง",
+    "Лепешка с рваной свининой":"แผ่นแป้งหมูฉีก",
+    "Лепешка с мясом (Standart)":"แผ่นแป้งเนื้อ ขนาดมาตรฐาน",
+    "Лепешка с мясом (XXL)":"แผ่นแป้งเนื้อ XXL",
+    "Лепешка с сыром (Standart)":"แผ่นแป้งชีส ขนาดมาตรฐาน",
+    "Лепешка с сыром (XXL)":"แผ่นแป้งชีส XXL",
+    "Лепешка с картошкой (Standart)":"แผ่นแป้งมันฝรั่ง ขนาดมาตรฐาน",
+    "Лепешка с картошкой (XXL)":"แผ่นแป้งมันฝรั่ง XXL",
+    "Лепешка с рваной свининой (Standart)":"แผ่นแป้งหมูฉีก ขนาดมาตรฐาน",
+    "Лепешка с рваной свининой (XXL)":"แผ่นแป้งหมูฉีก XXL",
+    "Салат Цезарь с копченой курицей":"ซีซาร์สลัดไก่รมควัน",
+    "Овощной салат":"สลัดผัก",
+    "Салат Обжорка":"สลัดออบชอร์กา",
+    "Салат Крабовый":"สลัดปู",
+    "Салат баклажаны в кляре":"มะเขือยาวทอด",
+    "Салат Деревенский":"สลัดชนบท",
+    "Салат Столичный":"สลัดสโตลิชนี",
+    "Ребра BBQ":"ซี่โครง BBQ",
+    "Ребро варено-копченое":"ซี่โครงต้มรมควัน",
+    "Кебаб свинина-говядина":"เคบับหมู-เนื้อ",
+    "Кебаб из курицы":"เคบับไก่",
+    "Шашлык из курицы":"ชาชลิกไก่",
+    "Шашлык из курицы 2.0":"ไก่ 2.0",
+    "Шашлык из куриного крыла":"ปีกไก่ย่าง",
+    "Шашлык из свинины":"ชาชลิกหมู"
   };
 
   function esc(value){
@@ -952,7 +1012,7 @@ app.get("/", (_req, res) => {
   res.type("html").send(screenHtml());
 });
 
-app.get("/screen", (_req, res) => {
+app.get(["/screen", "/screen.html"], (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
 });
@@ -1345,12 +1405,7 @@ h1{
 </html>`;
 }
 
-app.get("/courier", (_req, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  res.type("html").send(courierScreenHtml());
-});
-
-app.get("/rider", (_req, res) => {
+app.get(["/courier", "/courier.html", "/rider", "/rider.html"], (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(courierScreenHtml());
 });
