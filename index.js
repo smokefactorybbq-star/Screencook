@@ -46,13 +46,10 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SCREEN_SERVICE_SECRET = String(process.env.SCREEN_SERVICE_SECRET || "").trim();
 const SCREEN_REQUIRE_SECRET = String(process.env.SCREEN_REQUIRE_SECRET || "0").trim() === "1";
 
-// Внешний адрес вашей чековой программы через ngrok.
-// Указывайте только базовый адрес, например:
-// https://xxxx.ngrok-free.app
-const GRAB_RECEIVER_URL = String(
-  process.env.GRAB_RECEIVER_URL ||
-    "https://6b6b-171-6-244-48.ngrok-free.app"
-).trim();
+// Текущий статический ngrok-домен чековой программы.
+// Не используем старое значение GRAB_RECEIVER_URL из Railway Variables:
+// именно из-за старого адреса запросы могли уходить не в текущий ngrok.
+const GRAB_RECEIVER_URL = "https://pseudosocially-tiddly-alysia.ngrok-free.dev";
 
 if (!BOT_TOKEN) {
   throw new Error(
@@ -2960,6 +2957,7 @@ http.createServer(app).listen(PORT, async () => {
   console.log("Telegram token source:", process.env.BOT_TOKEN ? "BOT_TOKEN" : "TELEGRAM_BOT_TOKEN");
   console.log("OpenAI OCR:", openai ? "configured" : "NOT configured");
   console.log("Public URL:", PUBLIC_URL);
+  console.log("GRAB receiver:", GRAB_RECEIVER_URL + "/grab");
 
   await bot.telegram.setWebhook(webhookUrl, {
     drop_pending_updates: false,
