@@ -13,7 +13,7 @@ import OpenAI from "openai";
 // ==========================
 // ENV
 // ==========================
-const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -23,10 +23,10 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // https://xxxx.ngrok-free.app
 const GRAB_RECEIVER_URL = String(
   process.env.GRAB_RECEIVER_URL ||
-    "https://pseudosocially-tiddly-alysia.ngrok-free.dev/"
+    "https://6b6b-171-6-244-48.ngrok-free.app"
 ).trim();
 
-if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
+if (!BOT_TOKEN) throw new Error("BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is not set");
 if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
 if (!WEBHOOK_SECRET) throw new Error("WEBHOOK_SECRET is not set");
 
@@ -40,6 +40,11 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter(Boolean)
   .map(Number)
   .filter((n) => Number.isFinite(n));
+
+// Optional secret for orders received from the main customer bot / website.
+// If it is not configured, the endpoint remains compatible with the old setup.
+const SCREEN_SERVICE_SECRET = String(process.env.SCREEN_SERVICE_SECRET || "").trim();
+const SCREEN_REQUIRE_SECRET = String(process.env.SCREEN_REQUIRE_SECRET || "").trim() === "1";
 // ==========================
 // BOT UI
 // ==========================
@@ -71,7 +76,7 @@ const CATEGORIES = [
 ];
 
 const MENU_BY_CAT = {
-  soups: ["Кур бульон S1", "Борщ S2", "Гороховый суп S3", "Грибной суп S5", "Окрошка кур S5", "Окрошка колбаса S6", "Солянка S4"],
+  soups: ["Кур бульон S1", "Борщ S2", "Гороховый суп S3", "Грибной суп S5", "Окрошка S5", "Солянка S4"],
 
   gastronomy: ["Ребро варкоп", "Джерки"],
 
@@ -95,6 +100,7 @@ const MENU_BY_CAT = {
     "Фаршированный перец M18",
     "Котлеты мясные M19",
     "Котлеты куриные M20",
+    "Голубцы Тям M25",
     "Туш капуста M24",
   ],
 
@@ -104,8 +110,7 @@ const MENU_BY_CAT = {
     "Сметана",
     "Лаваш",
     "Кетчуп",
-    "Острая морковь 30г",
-    "Острая морковь 100г",
+    "Острая морковь",
     "Бочковой огурец",
     "Халапеньо",
     "Корнишон",
@@ -230,6 +235,131 @@ app.delete("/api/orders/:id", (req, res) => {
     ok: deleted,
     id: orderId,
   });
+});
+
+// ==========================================================
+// EXTERNAL ORDERS — added without changing the old Telegram bot logic.
+// Manual orders and screenshot OCR continue to use the same functions above.
+// ==========================================================
+const EXTERNAL_DISH_ALIASES = {
+  "Куриный суп": "Кур бульон S1",
+  "Борщ": "Борщ S2",
+  "Гороховый суп": "Гороховый суп S3",
+  "Грибной суп": "Грибной суп S5",
+  "Окрошка": "Окрошка S5",
+  "Солянка": "Солянка S4",
+  "Пельмени": "Пельмени M1",
+  "Зраза": "Зраза M2",
+  "Драники": "Драники M3",
+  "Картошка фри": "Карошка фри M4",
+  "Картошка дольками": "Картошка дольки M5",
+  "Мини чебуреки": "Мини чебуреки M6",
+  "Котлета по-киевски": "Киевская - пюре M7",
+  "Вареники с картошкой и беконом": "Вареники M15",
+  "Бефстроганов": "Бефстроганов M17",
+  "Перец фаршированный": "Фаршированный перец M18",
+  "Котлеты из домашнего фарша": "Котлеты мясные M19",
+  "Котлеты куриные": "Котлеты куриные M20",
+  "Ленивые голубцы Том ям": "Голубцы Тям M25",
+  "Ребра BBQ": "Рёбра BBQ G1",
+  "Рёбра BBQ": "Рёбра BBQ G1",
+  "Шашлык из свинины": "Шашлык свиной G2",
+  "Шашлык из курицы": "Шашлык куриный G3",
+  "Шашлык из курицы 2.0": "Куриный 2.0 G6",
+  "Кебаб свинина-говядина": "Кебаб свин-гов G4",
+  "Кебаб из курицы": "Кебаб курица G5",
+  "Шашлык из куриного крыла": "Wings кур G7",
+  "Салат Столичный": "Столичный T1",
+  "Салат Деревенский": "Деревенский T2",
+  "Салат Обжорка": "Обжорка T3",
+  "Салат Цезарь с копченой курицей": "Цезарь T4",
+  "Овощной салат": "Овощ Масло T8",
+  "Салат баклажаны в кляре": "Баклажаны T5",
+  "Салат Крабовый": "Сrab T9",
+  "Ребро варено-копченое": "Ребро варкоп",
+};
+
+function normalizeExternalDishName(name) {
+  const source = String(name || "").trim();
+  if (!source) return "";
+
+  const sizeMatch = source.match(/^(.*) \((Standart|XXL)\)$/i);
+  if (sizeMatch) {
+    const base = sizeMatch[1].trim();
+    const isXXL = sizeMatch[2].toUpperCase() === "XXL";
+    if (base === "Лепешка с рваной свининой") return isXXL ? "Лепешка с рваной БИГ M9" : "Лепешка с рваной СМОЛ M10";
+    if (base === "Лепешка с картошкой") return isXXL ? "Лепешка с картошкой БИГ M11" : "Лепешка с картошкой СМОЛ M12";
+    if (base === "Лепешка с сыром") return isXXL ? "Лепешка сыр БИГ M13" : "Лепешка сыр СМОЛ M14";
+  }
+
+  if (source === "Лепешка с рваной свининой") return "Лепешка с рваной СМОЛ M10";
+  if (source === "Лепешка с картошкой") return "Лепешка с картошкой СМОЛ M12";
+  if (source === "Лепешка с сыром") return "Лепешка сыр СМОЛ M14";
+
+  return EXTERNAL_DISH_ALIASES[source] || source;
+}
+
+function externalSecretAllowed(req) {
+  // Compatibility first: old Screencook never required an HTTP secret.
+  // By default the new external-order endpoint stays open so a stale Railway
+  // variable cannot break kitchen/courier delivery. To enforce the secret,
+  // explicitly set SCREEN_REQUIRE_SECRET=1.
+  if (!SCREEN_REQUIRE_SECRET) return true;
+  if (!SCREEN_SERVICE_SECRET) return false;
+  const supplied = String(req.get("X-Screen-Secret") || "");
+  if (!supplied) return false;
+  const expectedBuffer = Buffer.from(SCREEN_SERVICE_SECRET);
+  const suppliedBuffer = Buffer.from(supplied);
+  return expectedBuffer.length === suppliedBuffer.length && crypto.timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
+app.get("/health", (_req, res) => {
+  pruneOrders();
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    service: "screencook",
+    telegramBot: true,
+    screenshotOcrConfigured: Boolean(OPENAI_API_KEY),
+    activeOrders: orders.length,
+  });
+});
+
+app.post("/api/external-order", (req, res) => {
+  if (!externalSecretAllowed(req)) {
+    return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
+
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const orderNo = String(body.orderNo || body.order_number || body.orderNumber || body.order_no || "").trim();
+  const prepRaw = Number(body.prepMinutes ?? body.prep_minutes ?? body.preparation_minutes ?? 0);
+  const prepMinutes = Math.max(1, Math.min(240, Math.ceil(Number.isFinite(prepRaw) ? prepRaw : 0)));
+  const sourceItems = Array.isArray(body.items) ? body.items : [];
+  const items = sourceItems
+    .map((item) => ({
+      name: normalizeExternalDishName(item && item.name),
+      qty: Math.max(1, Math.floor(Number(item && item.qty || 1))),
+    }))
+    .filter((item) => item.name);
+
+  if (!orderNo) return res.status(400).json({ ok: false, error: "ORDER_NO_REQUIRED" });
+  if (!items.length) return res.status(400).json({ ok: false, error: "ITEMS_REQUIRED" });
+
+  pruneOrders();
+  let existing = orders.find((order) => String(order.orderNo || "").trim().toUpperCase() === orderNo.toUpperCase());
+  if (existing) {
+    existing.items = items;
+    existing.prepMinutes = prepMinutes;
+    if (body.cutlery === true || body.cutlery === false) existing.cutlery = body.cutlery;
+    pruneOrders();
+    return res.json({ ok: true, id: existing.id, orderNo, duplicate: true });
+  }
+
+  const orderId = addKitchenOrder(orderNo, prepMinutes);
+  updateKitchenOrderItems(orderId, items);
+  if (body.cutlery === true || body.cutlery === false) updateKitchenOrderCutlery(orderId, body.cutlery);
+
+  return res.status(201).json({ ok: true, id: orderId, orderNo, prepMinutes, itemsCount: items.length });
 });
 // ==========================
 // SCREEN HTML
@@ -596,8 +726,7 @@ function screenHtml() {
     "Сметана":"ซาวร์ครีม",
     "Лаваш":"ลาวาช",
     "Кетчуп":"ซอสมะเขือเทศ",
-    "Острая морковь 30г":"แครอทรสเผ็ด 30g",
-    "Острая морковь 100г":"แครอทรสเผ็ด 100g",
+    "Острая морковь":"แครอทรสเผ็ด",
     "Бочковой огурец":"แตงกวาดองถัง",
     "Халапеньо":"ฮาลาปิโน",
     "Корнишон":"แตงกวาดองลูกเล็ก",
@@ -889,6 +1018,11 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/screen", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(screenHtml());
+});
+
+app.get("/screen.html", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
 });
@@ -1282,6 +1416,11 @@ h1{
 }
 
 app.get("/courier", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(courierScreenHtml());
+});
+
+app.get("/courier.html", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(courierScreenHtml());
 });
@@ -1777,127 +1916,8 @@ function normalizeText(s) {
     .trim();
 }
 
-function collectItemSourceText(item) {
-  const parts = [];
-
-  function add(value) {
-    if (value == null) return;
-
-    if (Array.isArray(value)) {
-      for (const entry of value) add(entry);
-      return;
-    }
-
-    if (typeof value === "object") {
-      for (const entry of Object.values(value)) add(entry);
-      return;
-    }
-
-    const text = String(value).trim();
-    if (text) parts.push(text);
-  }
-
-  add(item?.sourceText);
-  add(item?.optionText);
-  add(item?.modifierText);
-  add(item?.details);
-  add(item?.options);
-  add(item?.modifiers);
-
-  return parts.join(" ");
-}
-
-// Возвращает:
-//   строку     — точное блюдо из меню;
-//   null       — блюдо распознано, но вариант определить нельзя;
-//   undefined  — это не специальный случай, можно использовать обычный поиск.
-function resolveSpecialMenuName(itemOrName) {
-  const item =
-    itemOrName && typeof itemOrName === "object"
-      ? itemOrName
-      : { name: itemOrName };
-
-  const modelName = String(item.name || "").trim();
-  const sourceText = collectItemSourceText(item);
-  const hasSourceText = !!sourceText.trim();
-
-  const source = normalizeText(sourceText);
-  const combined = normalizeText(sourceText + " " + modelName);
-  const reliableText = hasSourceText ? source : combined;
-
-  // Котлета по-киевски — это НЕ обычная куриная котлета M20.
-  const isKiev = /киев|киеск|kiev|kyiv/.test(reliableText);
-
-  if (isKiev) {
-    const hasWedges = /дольк|wedg|potato wedge|картофел[^ ]* доль/.test(reliableText);
-    const hasPuree = /пюре|mashed|mash potato|potato mash/.test(reliableText);
-
-    if (hasWedges) return "Киевская - дольки M8";
-    if (hasPuree) return "Киевская - пюре M7";
-
-    // Если гарнир не читается, не угадываем и не превращаем Киевскую
-    // в обычную позицию "Котлеты куриные M20".
-    const normalizedModelName = normalizeText(modelName);
-
-    if (/\bm8\b/.test(normalizedModelName)) {
-      return "Киевская - дольки M8";
-    }
-
-    if (/\bm7\b/.test(normalizedModelName)) {
-      return "Киевская - пюре M7";
-    }
-
-    return null;
-  }
-
-  // Овощной салат имеет три разные позиции. Заправку нельзя угадывать.
-  const isVegetableSalad =
-    /овощ[^ ]* салат|салат[^ ]* овощ|vegetable salad|fresh vegetable/.test(
-      reliableText
-    ) ||
-    (!hasSourceText && /овощ (смет|майо|масло)|\bt[678]\b/.test(combined));
-
-  if (isVegetableSalad) {
-    if (/майон|майо|mayonnaise|\bmayo\b/.test(reliableText)) {
-      return "Овощ Майо T7";
-    }
-
-    if (/сметан|sour cream/.test(reliableText)) {
-      return "Овощ Смет T6";
-    }
-
-    if (/масл|olive oil|vegetable oil|dressing oil|\boil\b/.test(reliableText)) {
-      return "Овощ Масло T8";
-    }
-
-    // Для старого формата ответа, где sourceText ещё отсутствует,
-    // разрешаем определить вариант по точному имени, которое вернул ИИ.
-    if (!hasSourceText) {
-      if (/овощ майо|\bt7\b/.test(combined)) return "Овощ Майо T7";
-      if (/овощ смет|\bt6\b/.test(combined)) return "Овощ Смет T6";
-      if (/овощ масло|\bt8\b/.test(combined)) return "Овощ Масло T8";
-    }
-
-    // Если заправка действительно не читается, лучше не подставлять сметану.
-    return null;
-  }
-
-  return undefined;
-}
-
-function findBestMenuName(itemOrName) {
-  const item =
-    itemOrName && typeof itemOrName === "object"
-      ? itemOrName
-      : { name: itemOrName };
-
-  const specialName = resolveSpecialMenuName(item);
-
-  if (specialName !== undefined) {
-    return specialName;
-  }
-
-  const raw = normalizeText(item.name);
+function findBestMenuName(rawName) {
+  const raw = normalizeText(rawName);
 
   if (!raw) return null;
 
@@ -1998,18 +2018,6 @@ async function recognizeScreenshots(ctx, fileIds) {
 "'Домашний кетчуп' = 'Кетчуп'. " +
 "'Маринованный халапеньо' = 'Халапеньо'. " +
 
-"КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ ПОХОЖИХ БЛЮД: " +
-"1. 'Котлета по-киевски', 'Киевская котлета', 'Chicken Kiev' или 'Chicken Kyiv' НИКОГДА не являются позицией 'Котлеты куриные M20'. " +
-"Если у Киевской указан гарнир пюре/mashed potato — верни 'Киевская - пюре M7'. " +
-"Если указаны картофельные дольки/wedges — верни 'Киевская - дольки M8'. " +
-"2. Овощной салат нельзя автоматически считать салатом со сметаной. Обязательно прочитай заправку или выбранную опцию. " +
-"Сметана/sour cream = 'Овощ Смет T6'. Майонез/mayonnaise/mayo = 'Овощ Майо T7'. Масло/oil = 'Овощ Масло T8'. " +
-"Если заправка находится под строкой Option, Modifier, Choice или Add item непосредственно внутри овощного салата, это выбор варианта салата, а не отдельная позиция 'Сметана' или 'Майонез'. " +
-"Не выдумывай сметану, если на изображении указано масло или майонез. " +
-
-"Для каждого блюда обязательно верни sourceText — исходное название, как оно написано на скриншоте, и optionText — текст выбранной опции/гарнира/заправки. " +
-"Если опции нет, optionText должен быть пустой строкой. " +
-
 "Если название блюда очень похоже по смыслу, но отличается словами, выбери наиболее подходящую позицию из меню. " +
 "Не пропускай блюдо только потому, что название отличается. " +
 
@@ -2025,7 +2033,7 @@ async function recognizeScreenshots(ctx, fileIds) {
 
         "Верни строго JSON без markdown, без пояснений. " +
         "Формат JSON: " +
-        '{"orderNo":"GF-123","cutlery":true,"items":[{"name":"Киевская - пюре M7","sourceText":"Котлета по-киевски","optionText":"Картофельное пюре","qty":1},{"name":"Овощ Масло T8","sourceText":"Овощной салат","optionText":"Заправка: масло","qty":1}]} ' +
+        '{"orderNo":"GF-123","cutlery":true,"items":[{"name":"Борщ S2","qty":1},{"name":"Сметана","qty":1}]} ' +
 
         "\n\nСПИСОК МЕНЮ:\n" +
         menuText,
@@ -2058,32 +2066,11 @@ async function recognizeScreenshots(ctx, fileIds) {
   const cart = {};
 
   for (const item of parsed.items || []) {
+    const matchedName = findBestMenuName(item.name);
+
+    if (!matchedName) continue;
+
     const qty = Math.max(1, Math.floor(Number(item.qty || 1)));
-    const matchedName = findBestMenuName(item);
-
-    if (!matchedName) {
-      const unresolvedText = normalizeText(
-        collectItemSourceText(item) + " " + String(item?.name || "")
-      );
-
-      let warningName = null;
-
-      if (/киев|киеск|kiev|kyiv/.test(unresolvedText)) {
-        warningName = "⚠️ Киевская — ВЫБРАТЬ ГАРНИР";
-      } else if (
-        /овощ[^ ]* салат|салат[^ ]* овощ|vegetable salad|fresh vegetable/.test(
-          unresolvedText
-        )
-      ) {
-        warningName = "⚠️ Овощной салат — ВЫБРАТЬ ЗАПРАВКУ";
-      }
-
-      if (warningName) {
-        cart[warningName] = (cart[warningName] || 0) + qty;
-      }
-
-      continue;
-    }
 
     cart[matchedName] = (cart[matchedName] || 0) + qty;
   }
