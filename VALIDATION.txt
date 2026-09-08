@@ -1,0 +1,8 @@
+node --check index.js: OK
+Manual order flow: present
+Screenshot OCR flow: present
+RU/TH kitchen language toggle: present
+/screen and /screen.html: present
+/courier, /courier.html and /rider: present
+Accepts BOT_TOKEN or TELEGRAM_BOT_TOKEN: yes
+Webhook redeploy keeps pending updates: yes (drop_pending_updates=false)

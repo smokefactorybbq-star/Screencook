@@ -13,9 +13,32 @@ import OpenAI from "openai";
 // ==========================
 // ENV
 // ==========================
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const PUBLIC_URL = process.env.PUBLIC_URL;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+// Поддерживаем оба имени переменной токена.
+// Старый Screencook использовал BOT_TOKEN, в других сервисах у вас используется
+// TELEGRAM_BOT_TOKEN. Теперь Railway может содержать любое из этих двух имён.
+const BOT_TOKEN = String(
+  process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || ""
+).trim();
+
+// PUBLIC_URL можно оставить как раньше. Если переменной нет, Railway сам даёт
+// RAILWAY_PUBLIC_DOMAIN — используем его автоматически.
+const PUBLIC_URL = String(
+  process.env.PUBLIC_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : "")
+).replace(/\/+$/, "");
+
+// WEBHOOK_SECRET оставляем совместимым со старой настройкой. Если он не задан,
+// создаём стабильный секрет из токена — после перезапуска адрес не меняется.
+const WEBHOOK_SECRET = String(
+  process.env.WEBHOOK_SECRET ||
+    process.env.TELEGRAM_WEBHOOK_SECRET ||
+    (BOT_TOKEN
+      ? crypto.createHash("sha256").update(BOT_TOKEN).digest("hex").slice(0, 32)
+      : "")
+).trim();
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Внешний адрес вашей чековой программы через ngrok.
@@ -26,9 +49,17 @@ const GRAB_RECEIVER_URL = String(
     "https://6b6b-171-6-244-48.ngrok-free.app"
 ).trim();
 
-if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
-if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
-if (!WEBHOOK_SECRET) throw new Error("WEBHOOK_SECRET is not set");
+if (!BOT_TOKEN) {
+  throw new Error(
+    "Telegram token is not set. Add BOT_TOKEN or TELEGRAM_BOT_TOKEN in Railway Variables."
+  );
+}
+if (!PUBLIC_URL) {
+  throw new Error(
+    "PUBLIC_URL is not set and RAILWAY_PUBLIC_DOMAIN is unavailable."
+  );
+}
+if (!WEBHOOK_SECRET) throw new Error("WEBHOOK_SECRET could not be created");
 
 const openai = OPENAI_API_KEY
   ? new OpenAI({ apiKey: OPENAI_API_KEY })
@@ -2783,8 +2814,12 @@ http.createServer(app).listen(PORT, async () => {
 
   const webhookUrl = `${PUBLIC_URL}${WEBHOOK_PATH}`;
 
+  console.log("Telegram token source:", process.env.BOT_TOKEN ? "BOT_TOKEN" : "TELEGRAM_BOT_TOKEN");
+  console.log("OpenAI OCR:", openai ? "configured" : "NOT configured");
+  console.log("Public URL:", PUBLIC_URL);
+
   await bot.telegram.setWebhook(webhookUrl, {
-    drop_pending_updates: true,
+    drop_pending_updates: false,
   });
 
   console.log("Webhook set to:", webhookUrl);
