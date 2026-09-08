@@ -1,9 +1,11 @@
 {
-  "name": "smokefactory-kitchen-courier-screen",
-  "version": "2.0.0",
+  "name": "smokefactory-screen-bot-original",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": {"start": "node index.js"},
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "express": "^4.21.2",
     "openai": "^4.104.0",

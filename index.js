@@ -40,12 +40,6 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter(Boolean)
   .map(Number)
   .filter((n) => Number.isFinite(n));
-
-// Bridge used by tgfoodbot for automatic website / Mini App orders.
-// The fallback matches tgfoodbot so the screens work even before Railway variables are added.
-const SCREEN_SERVICE_SECRET = String(
-  process.env.SCREEN_SERVICE_SECRET || "SmokeFactoryScreenBridge_2026_v1"
-).trim();
 // ==========================
 // BOT UI
 // ==========================
@@ -237,55 +231,6 @@ app.delete("/api/orders/:id", (req, res) => {
     id: orderId,
   });
 });
-// ==========================
-// AUTOMATIC ORDER BRIDGE FROM TGFOODBOT
-// ==========================
-app.post("/api/external-order", (req, res) => {
-  const receivedSecret = String(req.get("X-Screen-Secret") || "").trim();
-  if (SCREEN_SERVICE_SECRET && receivedSecret !== SCREEN_SERVICE_SECRET) {
-    return res.status(401).json({ ok: false, error: "INVALID_SCREEN_SECRET" });
-  }
-
-  const orderNo = String(req.body?.orderNo || "").trim();
-  const prepMinutes = Math.max(1, Math.min(240, Math.floor(Number(req.body?.prepMinutes || 0))));
-  const items = Array.isArray(req.body?.items)
-    ? req.body.items
-        .map((item) => ({
-          name: String(item?.name || "").trim(),
-          qty: Math.max(1, Math.floor(Number(item?.qty || 1))),
-        }))
-        .filter((item) => item.name)
-    : [];
-  const cutlery = typeof req.body?.cutlery === "boolean" ? req.body.cutlery : null;
-
-  if (!orderNo) return res.status(400).json({ ok: false, error: "ORDER_NUMBER_REQUIRED" });
-  if (!Number.isFinite(prepMinutes) || prepMinutes < 1) {
-    return res.status(400).json({ ok: false, error: "PREP_MINUTES_REQUIRED" });
-  }
-
-  // If tgfoodbot retries, replace the previous card instead of duplicating the order.
-  orders = orders.filter((order) => String(order.orderNo || "") !== orderNo);
-
-  const orderId = addKitchenOrder(orderNo, prepMinutes);
-  updateKitchenOrderItems(orderId, items);
-  if (cutlery === true || cutlery === false) updateKitchenOrderCutlery(orderId, cutlery);
-
-  const created = orders.find((order) => order.id === orderId) || null;
-  console.log("AUTO SCREEN ORDER:", orderNo, prepMinutes, items.length);
-  return res.json({ ok: true, order: created });
-});
-
-app.get("/health", (_req, res) => {
-  pruneOrders();
-  res.setHeader("Cache-Control", "no-store");
-  res.json({
-    ok: true,
-    service: "SmokeFactory kitchen + courier screens",
-    activeOrders: orders.length,
-    screenBridge: true,
-  });
-});
-
 // ==========================
 // SCREEN HTML
 // ==========================
@@ -942,7 +887,12 @@ app.get("/", (_req, res) => {
   res.type("html").send(screenHtml());
 });
 
-app.get(["/screen", "/screen.html"], (_req, res) => {
+app.get("/screen", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(screenHtml());
+});
+
+app.get("/screen.html", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(screenHtml());
 });
@@ -1335,7 +1285,17 @@ h1{
 </html>`;
 }
 
-app.get(["/courier", "/courier.html", "/rider", "/rider.html"], (_req, res) => {
+app.get("/courier", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(courierScreenHtml());
+});
+
+app.get("/courier.html", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(courierScreenHtml());
+});
+
+app.get("/rider", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(courierScreenHtml());
 });
