@@ -41,6 +41,11 @@ const WEBHOOK_SECRET = String(
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+// New website/Mini App orders use this same Screencook service.
+// Old Telegram/manual/screenshot logic does not depend on these variables.
+const SCREEN_SERVICE_SECRET = String(process.env.SCREEN_SERVICE_SECRET || "").trim();
+const SCREEN_REQUIRE_SECRET = String(process.env.SCREEN_REQUIRE_SECRET || "0").trim() === "1";
+
 // Внешний адрес вашей чековой программы через ngrok.
 // Указывайте только базовый адрес, например:
 // https://xxxx.ngrok-free.app
@@ -262,6 +267,139 @@ app.delete("/api/orders/:id", (req, res) => {
     id: orderId,
   });
 });
+// ==========================================================
+// EXTERNAL ORDERS — new website / Mini App integration.
+// This uses the SAME orders array and SAME add/update functions as the old
+// manual + screenshot bot, so both /screen.html and /courier.html see it.
+// ==========================================================
+const EXTERNAL_DISH_ALIASES = {
+  "Куриный суп": "Кур бульон S1",
+  "Борщ": "Борщ S2",
+  "Гороховый суп": "Гороховый суп S3",
+  "Грибной суп": "Грибной суп S5",
+  "Окрошка": "Окрошка S5",
+  "Солянка": "Солянка S4",
+  "Пельмени": "Пельмени M1",
+  "Зраза": "Зраза M2",
+  "Драники": "Драники M3",
+  "Картошка фри": "Карошка фри M4",
+  "Картошка дольками": "Картошка дольки M5",
+  "Мини чебуреки": "Мини чебуреки M6",
+  "Котлета по-киевски": "Киевская - пюре M7",
+  "Вареники с картошкой и беконом": "Вареники M15",
+  "Бефстроганов": "Бефстроганов M17",
+  "Перец фаршированный": "Фаршированный перец M18",
+  "Котлеты из домашнего фарша": "Котлеты мясные M19",
+  "Котлеты куриные": "Котлеты куриные M20",
+  "Ребра BBQ": "Рёбра BBQ G1",
+  "Рёбра BBQ": "Рёбра BBQ G1",
+  "Шашлык из свинины": "Шашлык свиной G2",
+  "Шашлык из курицы": "Шашлык куриный G3",
+  "Шашлык из курицы 2.0": "Куриный 2.0 G6",
+  "Кебаб свинина-говядина": "Кебаб свин-гов G4",
+  "Кебаб из курицы": "Кебаб курица G5",
+  "Шашлык из куриного крыла": "Wings кур G7",
+  "Салат Столичный": "Столичный T1",
+  "Салат Деревенский": "Деревенский T2",
+  "Салат Обжорка": "Обжорка T3",
+  "Салат Цезарь с копченой курицей": "Цезарь T4",
+  "Овощной салат": "Овощ Масло T8",
+  "Салат баклажаны в кляре": "Баклажаны T5",
+  "Салат Крабовый": "Сrab T9",
+  "Ребро варено-копченое": "Ребро варкоп"
+};
+
+function normalizeExternalDishName(name) {
+  const source = String(name || "").trim();
+  if (!source) return "";
+
+  const sizeMatch = source.match(/^(.*) \\((Standart|XXL)\\)$/i);
+  if (sizeMatch) {
+    const base = sizeMatch[1].trim();
+    const isXXL = sizeMatch[2].toUpperCase() === "XXL";
+    if (base === "Лепешка с рваной свининой") return isXXL ? "Лепешка с рваной БИГ M9" : "Лепешка с рваной СМОЛ M10";
+    if (base === "Лепешка с картошкой") return isXXL ? "Лепешка с картошкой БИГ M11" : "Лепешка с картошкой СМОЛ M12";
+    if (base === "Лепешка с сыром") return isXXL ? "Лепешка сыр БИГ M13" : "Лепешка сыр СМОЛ M14";
+  }
+
+  if (source === "Лепешка с рваной свининой") return "Лепешка с рваной СМОЛ M10";
+  if (source === "Лепешка с картошкой") return "Лепешка с картошкой СМОЛ M12";
+  if (source === "Лепешка с сыром") return "Лепешка сыр СМОЛ M14";
+  return EXTERNAL_DISH_ALIASES[source] || source;
+}
+
+function externalSecretAllowed(req) {
+  // Backward-compatible by default. Set SCREEN_REQUIRE_SECRET=1 only if you
+  // explicitly want to require X-Screen-Secret.
+  if (!SCREEN_REQUIRE_SECRET) return true;
+  if (!SCREEN_SERVICE_SECRET) return false;
+  const supplied = String(req.get("X-Screen-Secret") || "");
+  if (!supplied) return false;
+  const a = Buffer.from(SCREEN_SERVICE_SECRET);
+  const b = Buffer.from(supplied);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+app.get("/health", (_req, res) => {
+  pruneOrders();
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    service: "screencook",
+    build: "2026-09-08-old-ui-courier-restored",
+    screen: "/screen.html",
+    courier: "/courier.html",
+    activeOrders: orders.length,
+    screenshotOcrConfigured: Boolean(openai)
+  });
+});
+
+app.post("/api/external-order", (req, res) => {
+  if (!externalSecretAllowed(req)) {
+    return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
+
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const orderNo = String(body.orderNo || body.order_number || body.orderNumber || "").trim();
+  const prepRaw = Number(body.prepMinutes ?? body.prep_minutes ?? 0);
+  const prepMinutes = Math.max(1, Math.min(240, Math.ceil(Number.isFinite(prepRaw) && prepRaw > 0 ? prepRaw : 25)));
+  const rawItems = Array.isArray(body.items) ? body.items : [];
+  const items = rawItems.map((item) => ({
+    name: normalizeExternalDishName(item && item.name),
+    qty: Math.max(1, Math.floor(Number(item && item.qty) || 1))
+  })).filter((item) => item.name);
+
+  if (!orderNo) return res.status(400).json({ ok: false, error: "ORDER_NO_REQUIRED" });
+  if (!items.length) return res.status(400).json({ ok: false, error: "ITEMS_REQUIRED" });
+
+  // Update same order if website retries; otherwise create it.
+  let order = orders.find((o) => String(o.orderNo) === orderNo);
+  if (!order) {
+    const id = addKitchenOrder(orderNo, prepMinutes);
+    order = orders.find((o) => o.id === id);
+  } else {
+    const now = Date.now();
+    order.prepMinutes = prepMinutes;
+    order.createdAt = now;
+    order.endsAt = now + prepMinutes * 60_000;
+    order.expiresAt = order.endsAt + 5 * 60_000;
+  }
+
+  updateKitchenOrderItems(order.id, items);
+  if (typeof body.cutlery === "boolean") updateKitchenOrderCutlery(order.id, body.cutlery);
+  pruneOrders();
+
+  return res.json({
+    ok: true,
+    id: order.id,
+    orderNo: order.orderNo,
+    prepMinutes: order.prepMinutes,
+    endsAt: order.endsAt,
+    screen: "/screen.html",
+    courier: "/courier.html"
+  });
+});
+
 // ==========================
 // SCREEN HTML
 // ==========================
@@ -1334,11 +1472,6 @@ app.get("/rider", (_req, res) => {
 app.get("/rider.html", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(courierScreenHtml());
-});
-
-app.get("/health", (_req, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  res.json({ ok: true, service: "screencook", screen: "/screen.html", courier: "/courier.html" });
 });
 // ==========================
 // BOT
