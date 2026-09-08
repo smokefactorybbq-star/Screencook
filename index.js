@@ -17,15 +17,14 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const DEFAULT_SCREEN_SERVICE_SECRET = "SmokeFactoryScreenBridge_2026_v1";
-const SCREEN_SERVICE_SECRET = String(
-  process.env.SCREEN_SERVICE_SECRET || DEFAULT_SCREEN_SERVICE_SECRET
-).trim();
 
 // Внешний адрес вашей чековой программы через ngrok.
 // Указывайте только базовый адрес, например:
 // https://xxxx.ngrok-free.app
-const GRAB_RECEIVER_URL = String(process.env.GRAB_RECEIVER_URL || "").trim();
+const GRAB_RECEIVER_URL = String(
+  process.env.GRAB_RECEIVER_URL ||
+    "https://6b6b-171-6-244-48.ngrok-free.app"
+).trim();
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
 if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
@@ -41,6 +40,12 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter(Boolean)
   .map(Number)
   .filter((n) => Number.isFinite(n));
+
+// Bridge used by tgfoodbot for automatic website / Mini App orders.
+// The fallback matches tgfoodbot so the screens work even before Railway variables are added.
+const SCREEN_SERVICE_SECRET = String(
+  process.env.SCREEN_SERVICE_SECRET || "SmokeFactoryScreenBridge_2026_v1"
+).trim();
 // ==========================
 // BOT UI
 // ==========================
@@ -215,83 +220,6 @@ app.get("/api/orders", (_req, res) => {
   res.json(orders);
 });
 
-app.get("/health", (_req, res) => {
-  pruneOrders();
-  res.setHeader("Cache-Control", "no-store");
-  res.json({
-    ok: true,
-    service: "smoke-screen-service",
-    secretConfigured: Boolean(SCREEN_SERVICE_SECRET),
-    bridgeReady: true,
-    kitchenUrl: "/screen.html",
-    courierUrl: "/courier.html",
-    activeOrders: orders.length,
-  });
-});
-
-
-// Website/Mini App orders arrive through tgfoodbot. The secret keeps this
-// endpoint private while preserving the existing manual Telegram workflow.
-app.post("/api/external-order", (req, res) => {
-  const supplied = String(req.get("X-Screen-Secret") || "");
-  const configured = String(process.env.SCREEN_SERVICE_SECRET || "").trim();
-  const acceptedSecrets = new Set([
-    DEFAULT_SCREEN_SERVICE_SECRET,
-    SCREEN_SERVICE_SECRET,
-    configured,
-  ].filter(Boolean));
-
-  if (!acceptedSecrets.has(supplied)) {
-    console.warn("EXTERNAL ORDER REJECTED: bad/missing X-Screen-Secret");
-    return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
-  }
-
-  const body = req.body && typeof req.body === "object" ? req.body : {};
-  const orderNo = String(body.orderNo || body.order_number || "").trim().toUpperCase();
-  const prepMinutes = Math.max(1, Math.min(240, Math.floor(Number(body.prepMinutes || body.prep_minutes || 0))));
-  const rawItems = Array.isArray(body.items) ? body.items : [];
-  const items = rawItems
-    .filter((item) => item && typeof item === "object" && String(item.name || "").trim())
-    .map((item) => ({
-      name: String(item.name || "").trim(),
-      qty: Math.max(1, Math.min(99, Math.floor(Number(item.qty || item.quantity || 1)))),
-    }));
-
-  if (!/^(?:SM|GF)-[A-Z0-9-]+$/i.test(orderNo)) {
-    return res.status(400).json({ ok: false, error: "INVALID_ORDER_NUMBER" });
-  }
-  if (!Number.isFinite(prepMinutes)) {
-    return res.status(400).json({ ok: false, error: "INVALID_PREP_TIME" });
-  }
-  if (!items.length) {
-    return res.status(400).json({ ok: false, error: "ITEMS_REQUIRED" });
-  }
-
-  pruneOrders();
-  let order = orders.find((o) => String(o.orderNo || "").toUpperCase() === orderNo);
-  let orderId;
-  if (order) {
-    // Idempotent retry: refresh the automatic order rather than making a duplicate.
-    const now = Date.now();
-    order.prepMinutes = prepMinutes;
-    order.createdAt = now;
-    order.endsAt = now + prepMinutes * 60_000;
-    order.expiresAt = order.endsAt + 5 * 60_000;
-    orderId = order.id;
-  } else {
-    orderId = addKitchenOrder(orderNo, prepMinutes);
-  }
-
-  updateKitchenOrderItems(orderId, items);
-  if (typeof body.cutlery === "boolean") {
-    updateKitchenOrderCutlery(orderId, body.cutlery);
-  }
-  pruneOrders();
-  console.log("EXTERNAL ORDER ACCEPTED:", orderNo, "prep=", prepMinutes, "items=", items.length);
-
-  return res.json({ ok: true, id: orderId, orderNo, prepMinutes, items: items.length });
-});
-
 app.delete("/api/orders/:id", (req, res) => {
   const orderId = String(req.params.id || "").trim();
 
@@ -309,6 +237,55 @@ app.delete("/api/orders/:id", (req, res) => {
     id: orderId,
   });
 });
+// ==========================
+// AUTOMATIC ORDER BRIDGE FROM TGFOODBOT
+// ==========================
+app.post("/api/external-order", (req, res) => {
+  const receivedSecret = String(req.get("X-Screen-Secret") || "").trim();
+  if (SCREEN_SERVICE_SECRET && receivedSecret !== SCREEN_SERVICE_SECRET) {
+    return res.status(401).json({ ok: false, error: "INVALID_SCREEN_SECRET" });
+  }
+
+  const orderNo = String(req.body?.orderNo || "").trim();
+  const prepMinutes = Math.max(1, Math.min(240, Math.floor(Number(req.body?.prepMinutes || 0))));
+  const items = Array.isArray(req.body?.items)
+    ? req.body.items
+        .map((item) => ({
+          name: String(item?.name || "").trim(),
+          qty: Math.max(1, Math.floor(Number(item?.qty || 1))),
+        }))
+        .filter((item) => item.name)
+    : [];
+  const cutlery = typeof req.body?.cutlery === "boolean" ? req.body.cutlery : null;
+
+  if (!orderNo) return res.status(400).json({ ok: false, error: "ORDER_NUMBER_REQUIRED" });
+  if (!Number.isFinite(prepMinutes) || prepMinutes < 1) {
+    return res.status(400).json({ ok: false, error: "PREP_MINUTES_REQUIRED" });
+  }
+
+  // If tgfoodbot retries, replace the previous card instead of duplicating the order.
+  orders = orders.filter((order) => String(order.orderNo || "") !== orderNo);
+
+  const orderId = addKitchenOrder(orderNo, prepMinutes);
+  updateKitchenOrderItems(orderId, items);
+  if (cutlery === true || cutlery === false) updateKitchenOrderCutlery(orderId, cutlery);
+
+  const created = orders.find((order) => order.id === orderId) || null;
+  console.log("AUTO SCREEN ORDER:", orderNo, prepMinutes, items.length);
+  return res.json({ ok: true, order: created });
+});
+
+app.get("/health", (_req, res) => {
+  pruneOrders();
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    service: "SmokeFactory kitchen + courier screens",
+    activeOrders: orders.length,
+    screenBridge: true,
+  });
+});
+
 // ==========================
 // SCREEN HTML
 // ==========================
@@ -696,54 +673,7 @@ function screenHtml() {
     "Овощ Майо T7":"สลัดผักมายองเนส T7",
     "Овощ Масло T8":"สลัดผักน้ำมัน T8",
     "Баклажаны T5":"มะเขือยาวทอด T5",
-    "Сrab T9":"สลัดปู T9",
-
-    // Названия из сайта SmokeFactory / Mini App без внутренних кодов
-    "Борщ":"บอร์ช",
-    "Солянка":"ซุปโซลยังกา",
-    "Гороховый суп":"ซุปถั่วลันเตา",
-    "Грибной суп":"ซุปเห็ด",
-    "Окрошка":"โอโครชกา",
-    "Куриный суп":"ซุปไก่",
-    "Пельмени":"เกี๊ยวรัสเซีย",
-    "Вареники с картошкой и беконом":"วาเรนีกีมันฝรั่งและเบคอน",
-    "Котлеты куриные":"ไก่บดทอด",
-    "Котлеты из домашнего фарша":"เนื้อบดทอด",
-    "Перец фаршированный":"พริกหวานยัดไส้",
-    "Бефстроганов":"บีฟสโตรกานอฟ",
-    "Котлета по-киевски":"ไก่เคียฟ",
-    "Зраза":"ซราซี",
-    "Драники":"แพนเค้กมันฝรั่ง",
-    "Ленивые голубцы Том ям":"กะหล่ำปลียัดไส้ต้มยำ",
-    "Картошка фри":"เฟรนช์ฟรายส์",
-    "Картошка дольками":"มันฝรั่งเวดจ์",
-    "Мини чебуреки":"เชบูเรกีชิ้นเล็ก",
-    "Лепешка с сыром":"แผ่นแป้งชีส",
-    "Лепешка с картошкой":"แผ่นแป้งไส้มันฝรั่ง",
-    "Лепешка с рваной свининой":"แผ่นแป้งหมูฉีก",
-    "Лепешка с мясом (Standart)":"แผ่นแป้งเนื้อ ขนาดมาตรฐาน",
-    "Лепешка с мясом (XXL)":"แผ่นแป้งเนื้อ XXL",
-    "Лепешка с сыром (Standart)":"แผ่นแป้งชีส ขนาดมาตรฐาน",
-    "Лепешка с сыром (XXL)":"แผ่นแป้งชีส XXL",
-    "Лепешка с картошкой (Standart)":"แผ่นแป้งมันฝรั่ง ขนาดมาตรฐาน",
-    "Лепешка с картошкой (XXL)":"แผ่นแป้งมันฝรั่ง XXL",
-    "Лепешка с рваной свининой (Standart)":"แผ่นแป้งหมูฉีก ขนาดมาตรฐาน",
-    "Лепешка с рваной свининой (XXL)":"แผ่นแป้งหมูฉีก XXL",
-    "Салат Цезарь с копченой курицей":"ซีซาร์สลัดไก่รมควัน",
-    "Овощной салат":"สลัดผัก",
-    "Салат Обжорка":"สลัดออบชอร์กา",
-    "Салат Крабовый":"สลัดปู",
-    "Салат баклажаны в кляре":"มะเขือยาวทอด",
-    "Салат Деревенский":"สลัดชนบท",
-    "Салат Столичный":"สลัดสโตลิชนี",
-    "Ребра BBQ":"ซี่โครง BBQ",
-    "Ребро варено-копченое":"ซี่โครงต้มรมควัน",
-    "Кебаб свинина-говядина":"เคบับหมู-เนื้อ",
-    "Кебаб из курицы":"เคบับไก่",
-    "Шашлык из курицы":"ชาชลิกไก่",
-    "Шашлык из курицы 2.0":"ไก่ 2.0",
-    "Шашлык из куриного крыла":"ปีกไก่ย่าง",
-    "Шашлык из свинины":"ชาชลิกหมู"
+    "Сrab T9":"สลัดปู T9"
   };
 
   function esc(value){
