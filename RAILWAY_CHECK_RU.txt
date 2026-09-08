@@ -1,0 +1,16 @@
+Railway service screegrab должен запускать ЭТОТ проект.
+
+Source branch: ветка, куда загружен этот код
+Root Directory: /   (если package.json лежит в корне репозитория)
+Start Command: node index.js
+
+Не использовать index_screen_fixed.js.
+
+После deploy проверить:
+/health
+/screen.html
+/courier.html
+/rider.html
+
+Ожидаемый /health:
+{"ok":true,"service":"screencook","screen":"/screen.html","courier":"/courier.html"}

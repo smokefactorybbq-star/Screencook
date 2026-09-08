@@ -13,9 +13,32 @@ import OpenAI from "openai";
 // ==========================
 // ENV
 // ==========================
-const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
-const PUBLIC_URL = process.env.PUBLIC_URL;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+// Поддерживаем оба имени переменной токена.
+// Старый Screencook использовал BOT_TOKEN, в других сервисах у вас используется
+// TELEGRAM_BOT_TOKEN. Теперь Railway может содержать любое из этих двух имён.
+const BOT_TOKEN = String(
+  process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || ""
+).trim();
+
+// PUBLIC_URL можно оставить как раньше. Если переменной нет, Railway сам даёт
+// RAILWAY_PUBLIC_DOMAIN — используем его автоматически.
+const PUBLIC_URL = String(
+  process.env.PUBLIC_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : "")
+).replace(/\/+$/, "");
+
+// WEBHOOK_SECRET оставляем совместимым со старой настройкой. Если он не задан,
+// создаём стабильный секрет из токена — после перезапуска адрес не меняется.
+const WEBHOOK_SECRET = String(
+  process.env.WEBHOOK_SECRET ||
+    process.env.TELEGRAM_WEBHOOK_SECRET ||
+    (BOT_TOKEN
+      ? crypto.createHash("sha256").update(BOT_TOKEN).digest("hex").slice(0, 32)
+      : "")
+).trim();
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Внешний адрес вашей чековой программы через ngrok.
@@ -26,9 +49,17 @@ const GRAB_RECEIVER_URL = String(
     "https://6b6b-171-6-244-48.ngrok-free.app"
 ).trim();
 
-if (!BOT_TOKEN) throw new Error("BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is not set");
-if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
-if (!WEBHOOK_SECRET) throw new Error("WEBHOOK_SECRET is not set");
+if (!BOT_TOKEN) {
+  throw new Error(
+    "Telegram token is not set. Add BOT_TOKEN or TELEGRAM_BOT_TOKEN in Railway Variables."
+  );
+}
+if (!PUBLIC_URL) {
+  throw new Error(
+    "PUBLIC_URL is not set and RAILWAY_PUBLIC_DOMAIN is unavailable."
+  );
+}
+if (!WEBHOOK_SECRET) throw new Error("WEBHOOK_SECRET could not be created");
 
 const openai = OPENAI_API_KEY
   ? new OpenAI({ apiKey: OPENAI_API_KEY })
@@ -40,11 +71,6 @@ const MANAGER_IDS = (process.env.MANAGER_IDS || "")
   .filter(Boolean)
   .map(Number)
   .filter((n) => Number.isFinite(n));
-
-// Optional secret for orders received from the main customer bot / website.
-// If it is not configured, the endpoint remains compatible with the old setup.
-const SCREEN_SERVICE_SECRET = String(process.env.SCREEN_SERVICE_SECRET || "").trim();
-const SCREEN_REQUIRE_SECRET = String(process.env.SCREEN_REQUIRE_SECRET || "").trim() === "1";
 // ==========================
 // BOT UI
 // ==========================
@@ -235,131 +261,6 @@ app.delete("/api/orders/:id", (req, res) => {
     ok: deleted,
     id: orderId,
   });
-});
-
-// ==========================================================
-// EXTERNAL ORDERS — added without changing the old Telegram bot logic.
-// Manual orders and screenshot OCR continue to use the same functions above.
-// ==========================================================
-const EXTERNAL_DISH_ALIASES = {
-  "Куриный суп": "Кур бульон S1",
-  "Борщ": "Борщ S2",
-  "Гороховый суп": "Гороховый суп S3",
-  "Грибной суп": "Грибной суп S5",
-  "Окрошка": "Окрошка S5",
-  "Солянка": "Солянка S4",
-  "Пельмени": "Пельмени M1",
-  "Зраза": "Зраза M2",
-  "Драники": "Драники M3",
-  "Картошка фри": "Карошка фри M4",
-  "Картошка дольками": "Картошка дольки M5",
-  "Мини чебуреки": "Мини чебуреки M6",
-  "Котлета по-киевски": "Киевская - пюре M7",
-  "Вареники с картошкой и беконом": "Вареники M15",
-  "Бефстроганов": "Бефстроганов M17",
-  "Перец фаршированный": "Фаршированный перец M18",
-  "Котлеты из домашнего фарша": "Котлеты мясные M19",
-  "Котлеты куриные": "Котлеты куриные M20",
-  "Ленивые голубцы Том ям": "Голубцы Тям M25",
-  "Ребра BBQ": "Рёбра BBQ G1",
-  "Рёбра BBQ": "Рёбра BBQ G1",
-  "Шашлык из свинины": "Шашлык свиной G2",
-  "Шашлык из курицы": "Шашлык куриный G3",
-  "Шашлык из курицы 2.0": "Куриный 2.0 G6",
-  "Кебаб свинина-говядина": "Кебаб свин-гов G4",
-  "Кебаб из курицы": "Кебаб курица G5",
-  "Шашлык из куриного крыла": "Wings кур G7",
-  "Салат Столичный": "Столичный T1",
-  "Салат Деревенский": "Деревенский T2",
-  "Салат Обжорка": "Обжорка T3",
-  "Салат Цезарь с копченой курицей": "Цезарь T4",
-  "Овощной салат": "Овощ Масло T8",
-  "Салат баклажаны в кляре": "Баклажаны T5",
-  "Салат Крабовый": "Сrab T9",
-  "Ребро варено-копченое": "Ребро варкоп",
-};
-
-function normalizeExternalDishName(name) {
-  const source = String(name || "").trim();
-  if (!source) return "";
-
-  const sizeMatch = source.match(/^(.*) \((Standart|XXL)\)$/i);
-  if (sizeMatch) {
-    const base = sizeMatch[1].trim();
-    const isXXL = sizeMatch[2].toUpperCase() === "XXL";
-    if (base === "Лепешка с рваной свининой") return isXXL ? "Лепешка с рваной БИГ M9" : "Лепешка с рваной СМОЛ M10";
-    if (base === "Лепешка с картошкой") return isXXL ? "Лепешка с картошкой БИГ M11" : "Лепешка с картошкой СМОЛ M12";
-    if (base === "Лепешка с сыром") return isXXL ? "Лепешка сыр БИГ M13" : "Лепешка сыр СМОЛ M14";
-  }
-
-  if (source === "Лепешка с рваной свининой") return "Лепешка с рваной СМОЛ M10";
-  if (source === "Лепешка с картошкой") return "Лепешка с картошкой СМОЛ M12";
-  if (source === "Лепешка с сыром") return "Лепешка сыр СМОЛ M14";
-
-  return EXTERNAL_DISH_ALIASES[source] || source;
-}
-
-function externalSecretAllowed(req) {
-  // Compatibility first: old Screencook never required an HTTP secret.
-  // By default the new external-order endpoint stays open so a stale Railway
-  // variable cannot break kitchen/courier delivery. To enforce the secret,
-  // explicitly set SCREEN_REQUIRE_SECRET=1.
-  if (!SCREEN_REQUIRE_SECRET) return true;
-  if (!SCREEN_SERVICE_SECRET) return false;
-  const supplied = String(req.get("X-Screen-Secret") || "");
-  if (!supplied) return false;
-  const expectedBuffer = Buffer.from(SCREEN_SERVICE_SECRET);
-  const suppliedBuffer = Buffer.from(supplied);
-  return expectedBuffer.length === suppliedBuffer.length && crypto.timingSafeEqual(expectedBuffer, suppliedBuffer);
-}
-
-app.get("/health", (_req, res) => {
-  pruneOrders();
-  res.setHeader("Cache-Control", "no-store");
-  res.json({
-    ok: true,
-    service: "screencook",
-    telegramBot: true,
-    screenshotOcrConfigured: Boolean(OPENAI_API_KEY),
-    activeOrders: orders.length,
-  });
-});
-
-app.post("/api/external-order", (req, res) => {
-  if (!externalSecretAllowed(req)) {
-    return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
-  }
-
-  const body = req.body && typeof req.body === "object" ? req.body : {};
-  const orderNo = String(body.orderNo || body.order_number || body.orderNumber || body.order_no || "").trim();
-  const prepRaw = Number(body.prepMinutes ?? body.prep_minutes ?? body.preparation_minutes ?? 0);
-  const prepMinutes = Math.max(1, Math.min(240, Math.ceil(Number.isFinite(prepRaw) ? prepRaw : 0)));
-  const sourceItems = Array.isArray(body.items) ? body.items : [];
-  const items = sourceItems
-    .map((item) => ({
-      name: normalizeExternalDishName(item && item.name),
-      qty: Math.max(1, Math.floor(Number(item && item.qty || 1))),
-    }))
-    .filter((item) => item.name);
-
-  if (!orderNo) return res.status(400).json({ ok: false, error: "ORDER_NO_REQUIRED" });
-  if (!items.length) return res.status(400).json({ ok: false, error: "ITEMS_REQUIRED" });
-
-  pruneOrders();
-  let existing = orders.find((order) => String(order.orderNo || "").trim().toUpperCase() === orderNo.toUpperCase());
-  if (existing) {
-    existing.items = items;
-    existing.prepMinutes = prepMinutes;
-    if (body.cutlery === true || body.cutlery === false) existing.cutlery = body.cutlery;
-    pruneOrders();
-    return res.json({ ok: true, id: existing.id, orderNo, duplicate: true });
-  }
-
-  const orderId = addKitchenOrder(orderNo, prepMinutes);
-  updateKitchenOrderItems(orderId, items);
-  if (body.cutlery === true || body.cutlery === false) updateKitchenOrderCutlery(orderId, body.cutlery);
-
-  return res.status(201).json({ ok: true, id: orderId, orderNo, prepMinutes, itemsCount: items.length });
 });
 // ==========================
 // SCREEN HTML
@@ -1428,6 +1329,16 @@ app.get("/courier.html", (_req, res) => {
 app.get("/rider", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(courierScreenHtml());
+});
+
+app.get("/rider.html", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(courierScreenHtml());
+});
+
+app.get("/health", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, service: "screencook", screen: "/screen.html", courier: "/courier.html" });
 });
 // ==========================
 // BOT
@@ -2913,8 +2824,12 @@ http.createServer(app).listen(PORT, async () => {
 
   const webhookUrl = `${PUBLIC_URL}${WEBHOOK_PATH}`;
 
+  console.log("Telegram token source:", process.env.BOT_TOKEN ? "BOT_TOKEN" : "TELEGRAM_BOT_TOKEN");
+  console.log("OpenAI OCR:", openai ? "configured" : "NOT configured");
+  console.log("Public URL:", PUBLIC_URL);
+
   await bot.telegram.setWebhook(webhookUrl, {
-    drop_pending_updates: true,
+    drop_pending_updates: false,
   });
 
   console.log("Webhook set to:", webhookUrl);
