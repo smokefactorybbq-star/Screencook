@@ -51,7 +51,6 @@ const SCREEN_REQUIRE_SECRET = String(process.env.SCREEN_REQUIRE_SECRET || "0").t
 // https://xxxx.ngrok-free.app
 const GRAB_RECEIVER_URL = String(
   process.env.GRAB_RECEIVER_URL ||
-  process.env.PRINT_URL ||
     "https://6b6b-171-6-244-48.ngrok-free.app"
 ).trim();
 
@@ -355,7 +354,7 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.post("/api/external-order", async (req, res) => {
+app.post("/api/external-order", (req, res) => {
   if (!externalSecretAllowed(req)) {
     return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
   }
@@ -390,17 +389,6 @@ app.post("/api/external-order", async (req, res) => {
   if (typeof body.cutlery === "boolean") updateKitchenOrderCutlery(order.id, body.cutlery);
   pruneOrders();
 
-  // ВОССТАНОВЛЕНО: заказ из Mini App / сайта сразу создаёт стикер
-  // с тем же номером SM-* в чековой программе. Ошибка стикера не должна
-  // отменять заказ и не должна убирать его с кухонного/курьерского экрана.
-  let labelQueued = false;
-  try {
-    const labelResult = await sendGrabOrderNumber(orderNo);
-    labelQueued = Boolean(labelResult && labelResult.ok !== false && !labelResult.skipped);
-  } catch (error) {
-    console.error("EXTERNAL ORDER LABEL ERROR:", orderNo, error);
-  }
-
   return res.json({
     ok: true,
     id: order.id,
@@ -408,8 +396,7 @@ app.post("/api/external-order", async (req, res) => {
     prepMinutes: order.prepMinutes,
     endsAt: order.endsAt,
     screen: "/screen.html",
-    courier: "/courier.html",
-    labelQueued
+    courier: "/courier.html"
   });
 });
 
@@ -1590,13 +1577,7 @@ function grabEndpoint() {
 
   if (!base) return "";
 
-  let withoutSlash = base.replace(/\/+$/, "");
-
-  // Если в Railway указан PRINT_URL вида https://host/order,
-  // используем тот же Windows-сервис, но маршрут стикеров /grab-label.
-  if (withoutSlash.endsWith("/order")) {
-    withoutSlash = withoutSlash.slice(0, -"/order".length);
-  }
+  const withoutSlash = base.replace(/\/+$/, "");
 
   if (
     withoutSlash.endsWith("/grab") ||
@@ -1605,7 +1586,7 @@ function grabEndpoint() {
     return withoutSlash;
   }
 
-  return withoutSlash + "/grab-label";
+  return withoutSlash + "/grab";
 }
 
 function postJson(url, payload, timeoutMs = 15000) {
