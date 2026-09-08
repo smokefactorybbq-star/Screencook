@@ -17,14 +17,12 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const SCREEN_SERVICE_SECRET = String(process.env.SCREEN_SERVICE_SECRET || "").trim();
 
 // Внешний адрес вашей чековой программы через ngrok.
 // Указывайте только базовый адрес, например:
 // https://xxxx.ngrok-free.app
-const GRAB_RECEIVER_URL = String(
-  process.env.GRAB_RECEIVER_URL ||
-    "https://pseudosocially-tiddly-alysia.ngrok-free.dev/"
-).trim();
+const GRAB_RECEIVER_URL = String(process.env.GRAB_RECEIVER_URL || "").trim();
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set");
 if (!PUBLIC_URL) throw new Error("PUBLIC_URL is not set");
@@ -71,7 +69,7 @@ const CATEGORIES = [
 ];
 
 const MENU_BY_CAT = {
-  soups: ["Кур бульон S1", "Борщ S2", "Гороховый суп S3", "Грибной суп S5", "Окрошка кур S5", "Окрошка колбаса S6", "Солянка S4"],
+  soups: ["Кур бульон S1", "Борщ S2", "Гороховый суп S3", "Грибной суп S5", "Окрошка S5", "Солянка S4"],
 
   gastronomy: ["Ребро варкоп", "Джерки"],
 
@@ -95,6 +93,7 @@ const MENU_BY_CAT = {
     "Фаршированный перец M18",
     "Котлеты мясные M19",
     "Котлеты куриные M20",
+    "Голубцы Тям M25",
     "Туш капуста M24",
   ],
 
@@ -104,8 +103,7 @@ const MENU_BY_CAT = {
     "Сметана",
     "Лаваш",
     "Кетчуп",
-    "Острая морковь 30г",
-    "Острая морковь 100г",
+    "Острая морковь",
     "Бочковой огурец",
     "Халапеньо",
     "Корнишон",
@@ -212,6 +210,60 @@ app.get("/api/orders", (_req, res) => {
 
   res.setHeader("Cache-Control", "no-store");
   res.json(orders);
+});
+
+
+// Website/Mini App orders arrive through tgfoodbot. The secret keeps this
+// endpoint private while preserving the existing manual Telegram workflow.
+app.post("/api/external-order", (req, res) => {
+  const supplied = String(req.get("X-Screen-Secret") || "");
+  if (!SCREEN_SERVICE_SECRET || supplied !== SCREEN_SERVICE_SECRET) {
+    return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+  }
+
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const orderNo = String(body.orderNo || body.order_number || "").trim().toUpperCase();
+  const prepMinutes = Math.max(1, Math.min(240, Math.floor(Number(body.prepMinutes || body.prep_minutes || 0))));
+  const rawItems = Array.isArray(body.items) ? body.items : [];
+  const items = rawItems
+    .filter((item) => item && typeof item === "object" && String(item.name || "").trim())
+    .map((item) => ({
+      name: String(item.name || "").trim(),
+      qty: Math.max(1, Math.min(99, Math.floor(Number(item.qty || item.quantity || 1)))),
+    }));
+
+  if (!/^(?:SM|GF)-[A-Z0-9-]+$/i.test(orderNo)) {
+    return res.status(400).json({ ok: false, error: "INVALID_ORDER_NUMBER" });
+  }
+  if (!Number.isFinite(prepMinutes)) {
+    return res.status(400).json({ ok: false, error: "INVALID_PREP_TIME" });
+  }
+  if (!items.length) {
+    return res.status(400).json({ ok: false, error: "ITEMS_REQUIRED" });
+  }
+
+  pruneOrders();
+  let order = orders.find((o) => String(o.orderNo || "").toUpperCase() === orderNo);
+  let orderId;
+  if (order) {
+    // Idempotent retry: refresh the automatic order rather than making a duplicate.
+    const now = Date.now();
+    order.prepMinutes = prepMinutes;
+    order.createdAt = now;
+    order.endsAt = now + prepMinutes * 60_000;
+    order.expiresAt = order.endsAt + 5 * 60_000;
+    orderId = order.id;
+  } else {
+    orderId = addKitchenOrder(orderNo, prepMinutes);
+  }
+
+  updateKitchenOrderItems(orderId, items);
+  if (typeof body.cutlery === "boolean") {
+    updateKitchenOrderCutlery(orderId, body.cutlery);
+  }
+  pruneOrders();
+
+  return res.json({ ok: true, id: orderId, orderNo, prepMinutes, items: items.length });
 });
 
 app.delete("/api/orders/:id", (req, res) => {
@@ -596,8 +648,7 @@ function screenHtml() {
     "Сметана":"ซาวร์ครีม",
     "Лаваш":"ลาวาช",
     "Кетчуп":"ซอสมะเขือเทศ",
-    "Острая морковь 30г":"แครอทรสเผ็ด 30g",
-    "Острая морковь 100г":"แครอทรสเผ็ด 100g",
+    "Острая морковь":"แครอทรสเผ็ด",
     "Бочковой огурец":"แตงกวาดองถัง",
     "Халапеньо":"ฮาลาปิโน",
     "Корнишон":"แตงกวาดองลูกเล็ก",
@@ -1777,127 +1828,8 @@ function normalizeText(s) {
     .trim();
 }
 
-function collectItemSourceText(item) {
-  const parts = [];
-
-  function add(value) {
-    if (value == null) return;
-
-    if (Array.isArray(value)) {
-      for (const entry of value) add(entry);
-      return;
-    }
-
-    if (typeof value === "object") {
-      for (const entry of Object.values(value)) add(entry);
-      return;
-    }
-
-    const text = String(value).trim();
-    if (text) parts.push(text);
-  }
-
-  add(item?.sourceText);
-  add(item?.optionText);
-  add(item?.modifierText);
-  add(item?.details);
-  add(item?.options);
-  add(item?.modifiers);
-
-  return parts.join(" ");
-}
-
-// Возвращает:
-//   строку     — точное блюдо из меню;
-//   null       — блюдо распознано, но вариант определить нельзя;
-//   undefined  — это не специальный случай, можно использовать обычный поиск.
-function resolveSpecialMenuName(itemOrName) {
-  const item =
-    itemOrName && typeof itemOrName === "object"
-      ? itemOrName
-      : { name: itemOrName };
-
-  const modelName = String(item.name || "").trim();
-  const sourceText = collectItemSourceText(item);
-  const hasSourceText = !!sourceText.trim();
-
-  const source = normalizeText(sourceText);
-  const combined = normalizeText(sourceText + " " + modelName);
-  const reliableText = hasSourceText ? source : combined;
-
-  // Котлета по-киевски — это НЕ обычная куриная котлета M20.
-  const isKiev = /киев|киеск|kiev|kyiv/.test(reliableText);
-
-  if (isKiev) {
-    const hasWedges = /дольк|wedg|potato wedge|картофел[^ ]* доль/.test(reliableText);
-    const hasPuree = /пюре|mashed|mash potato|potato mash/.test(reliableText);
-
-    if (hasWedges) return "Киевская - дольки M8";
-    if (hasPuree) return "Киевская - пюре M7";
-
-    // Если гарнир не читается, не угадываем и не превращаем Киевскую
-    // в обычную позицию "Котлеты куриные M20".
-    const normalizedModelName = normalizeText(modelName);
-
-    if (/\bm8\b/.test(normalizedModelName)) {
-      return "Киевская - дольки M8";
-    }
-
-    if (/\bm7\b/.test(normalizedModelName)) {
-      return "Киевская - пюре M7";
-    }
-
-    return null;
-  }
-
-  // Овощной салат имеет три разные позиции. Заправку нельзя угадывать.
-  const isVegetableSalad =
-    /овощ[^ ]* салат|салат[^ ]* овощ|vegetable salad|fresh vegetable/.test(
-      reliableText
-    ) ||
-    (!hasSourceText && /овощ (смет|майо|масло)|\bt[678]\b/.test(combined));
-
-  if (isVegetableSalad) {
-    if (/майон|майо|mayonnaise|\bmayo\b/.test(reliableText)) {
-      return "Овощ Майо T7";
-    }
-
-    if (/сметан|sour cream/.test(reliableText)) {
-      return "Овощ Смет T6";
-    }
-
-    if (/масл|olive oil|vegetable oil|dressing oil|\boil\b/.test(reliableText)) {
-      return "Овощ Масло T8";
-    }
-
-    // Для старого формата ответа, где sourceText ещё отсутствует,
-    // разрешаем определить вариант по точному имени, которое вернул ИИ.
-    if (!hasSourceText) {
-      if (/овощ майо|\bt7\b/.test(combined)) return "Овощ Майо T7";
-      if (/овощ смет|\bt6\b/.test(combined)) return "Овощ Смет T6";
-      if (/овощ масло|\bt8\b/.test(combined)) return "Овощ Масло T8";
-    }
-
-    // Если заправка действительно не читается, лучше не подставлять сметану.
-    return null;
-  }
-
-  return undefined;
-}
-
-function findBestMenuName(itemOrName) {
-  const item =
-    itemOrName && typeof itemOrName === "object"
-      ? itemOrName
-      : { name: itemOrName };
-
-  const specialName = resolveSpecialMenuName(item);
-
-  if (specialName !== undefined) {
-    return specialName;
-  }
-
-  const raw = normalizeText(item.name);
+function findBestMenuName(rawName) {
+  const raw = normalizeText(rawName);
 
   if (!raw) return null;
 
@@ -1998,18 +1930,6 @@ async function recognizeScreenshots(ctx, fileIds) {
 "'Домашний кетчуп' = 'Кетчуп'. " +
 "'Маринованный халапеньо' = 'Халапеньо'. " +
 
-"КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ ПОХОЖИХ БЛЮД: " +
-"1. 'Котлета по-киевски', 'Киевская котлета', 'Chicken Kiev' или 'Chicken Kyiv' НИКОГДА не являются позицией 'Котлеты куриные M20'. " +
-"Если у Киевской указан гарнир пюре/mashed potato — верни 'Киевская - пюре M7'. " +
-"Если указаны картофельные дольки/wedges — верни 'Киевская - дольки M8'. " +
-"2. Овощной салат нельзя автоматически считать салатом со сметаной. Обязательно прочитай заправку или выбранную опцию. " +
-"Сметана/sour cream = 'Овощ Смет T6'. Майонез/mayonnaise/mayo = 'Овощ Майо T7'. Масло/oil = 'Овощ Масло T8'. " +
-"Если заправка находится под строкой Option, Modifier, Choice или Add item непосредственно внутри овощного салата, это выбор варианта салата, а не отдельная позиция 'Сметана' или 'Майонез'. " +
-"Не выдумывай сметану, если на изображении указано масло или майонез. " +
-
-"Для каждого блюда обязательно верни sourceText — исходное название, как оно написано на скриншоте, и optionText — текст выбранной опции/гарнира/заправки. " +
-"Если опции нет, optionText должен быть пустой строкой. " +
-
 "Если название блюда очень похоже по смыслу, но отличается словами, выбери наиболее подходящую позицию из меню. " +
 "Не пропускай блюдо только потому, что название отличается. " +
 
@@ -2025,7 +1945,7 @@ async function recognizeScreenshots(ctx, fileIds) {
 
         "Верни строго JSON без markdown, без пояснений. " +
         "Формат JSON: " +
-        '{"orderNo":"GF-123","cutlery":true,"items":[{"name":"Киевская - пюре M7","sourceText":"Котлета по-киевски","optionText":"Картофельное пюре","qty":1},{"name":"Овощ Масло T8","sourceText":"Овощной салат","optionText":"Заправка: масло","qty":1}]} ' +
+        '{"orderNo":"GF-123","cutlery":true,"items":[{"name":"Борщ S2","qty":1},{"name":"Сметана","qty":1}]} ' +
 
         "\n\nСПИСОК МЕНЮ:\n" +
         menuText,
@@ -2058,32 +1978,11 @@ async function recognizeScreenshots(ctx, fileIds) {
   const cart = {};
 
   for (const item of parsed.items || []) {
+    const matchedName = findBestMenuName(item.name);
+
+    if (!matchedName) continue;
+
     const qty = Math.max(1, Math.floor(Number(item.qty || 1)));
-    const matchedName = findBestMenuName(item);
-
-    if (!matchedName) {
-      const unresolvedText = normalizeText(
-        collectItemSourceText(item) + " " + String(item?.name || "")
-      );
-
-      let warningName = null;
-
-      if (/киев|киеск|kiev|kyiv/.test(unresolvedText)) {
-        warningName = "⚠️ Киевская — ВЫБРАТЬ ГАРНИР";
-      } else if (
-        /овощ[^ ]* салат|салат[^ ]* овощ|vegetable salad|fresh vegetable/.test(
-          unresolvedText
-        )
-      ) {
-        warningName = "⚠️ Овощной салат — ВЫБРАТЬ ЗАПРАВКУ";
-      }
-
-      if (warningName) {
-        cart[warningName] = (cart[warningName] || 0) + qty;
-      }
-
-      continue;
-    }
 
     cart[matchedName] = (cart[matchedName] || 0) + qty;
   }

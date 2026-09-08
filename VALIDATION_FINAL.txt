@@ -1,0 +1,5 @@
+Final local checks (2026-09-08):
+- node --check index.js: OK
+- Existing manual manager Telegram workflow preserved
+- New protected endpoint: POST /api/external-order
+- /screen, /courier and /rider preserved
